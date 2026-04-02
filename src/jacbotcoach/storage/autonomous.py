@@ -170,3 +170,57 @@ class AutonomousStore:
         if updated:
             self.write("\n".join(lines))
         return updated
+
+    def delete_goal(self, goal_title: str) -> bool:
+        """
+        Remove a goal row entirely (any section).
+        Returns True if a row was found and removed.
+        """
+        content = self.read()
+        lines = content.splitlines()
+        new_lines = []
+        found = False
+
+        for line in lines:
+            if (
+                line.strip().startswith("|")
+                and goal_title.lower() in line.lower()
+                and not all(c in "-| " for c in line.strip())
+                and not any(h in line for h in ("Status", "Difficulty", "Frequency", "Goal", "Habit"))
+            ):
+                found = True
+            else:
+                new_lines.append(line)
+
+        if found:
+            self.write("\n".join(new_lines))
+        return found
+
+    def edit_goal_title(self, goal_title: str, new_title: str) -> bool:
+        """
+        Replace the title column of a matching goal row with new_title.
+        Returns True if found and updated.
+        """
+        content = self.read()
+        lines = content.splitlines()
+        updated = False
+
+        for i, line in enumerate(lines):
+            if (
+                line.strip().startswith("|")
+                and goal_title.lower() in line.lower()
+                and not all(c in "-| " for c in line.strip())
+                and not any(h in line for h in ("Status", "Difficulty", "Frequency", "Goal", "Habit"))
+            ):
+                # Replace only the first occurrence of the matched title text
+                # The title is the third column: | status | difficulty | title | notes |
+                old_cell = goal_title
+                # Case-insensitive replacement of the matching portion
+                pattern = re.compile(re.escape(goal_title), re.IGNORECASE)
+                lines[i] = pattern.sub(new_title, line, count=1)
+                updated = True
+                break
+
+        if updated:
+            self.write("\n".join(lines))
+        return updated

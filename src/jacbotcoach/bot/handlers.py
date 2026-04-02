@@ -30,6 +30,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "  /goals_cat       — view goals by category\n"
         "  /goal_done <title> — mark a goal complete\n"
         "  /goal_status <title> <status> — update goal status\n"
+        "  /goal_edit <old> | <new> — rename a goal\n"
+        "  /goal_delete <title> — remove a goal\n"
         "  /promote <item>  — move backlog item to active goals\n"
         "  /status          — view the full goals file\n\n"
         "Focus:\n"
@@ -317,6 +319,59 @@ async def goal_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         await update.message.reply_text(
             f"Goal not found: '{title}'\nUse /goals_list to see exact titles."
+        )
+
+
+async def goal_delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Remove a goal entirely: /goal_delete <title>"""
+    if not _is_allowed(update):
+        return
+    title = " ".join(context.args) if context.args else ""
+    if not title:
+        await update.message.reply_text(
+            "Usage: /goal_delete <goal title>\n"
+            "Example: /goal_delete Learn Spanish"
+        )
+        return
+    settings = get_settings()
+    store = AutonomousStore(settings.autonomous_md_path)
+    if store.delete_goal(title):
+        await update.message.reply_text(f"🗑️ Goal deleted:\n{title}")
+    else:
+        await update.message.reply_text(
+            f"Goal not found: '{title}'\n"
+            "Use /goals_list to see exact goal titles."
+        )
+
+
+async def goal_edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Rename a goal: /goal_edit <old title> | <new title>
+    The pipe character separates old and new title.
+    """
+    if not _is_allowed(update):
+        return
+    text = " ".join(context.args) if context.args else ""
+    if "|" not in text:
+        await update.message.reply_text(
+            "Usage: /goal_edit <old title> | <new title>\n"
+            "Example: /goal_edit Learn Spanish | Learn Portuguese"
+        )
+        return
+    parts = text.split("|", 1)
+    old_title = parts[0].strip()
+    new_title = parts[1].strip()
+    if not old_title or not new_title:
+        await update.message.reply_text("Both old and new titles must be non-empty.")
+        return
+    settings = get_settings()
+    store = AutonomousStore(settings.autonomous_md_path)
+    if store.edit_goal_title(old_title, new_title):
+        await update.message.reply_text(f"✏️ Goal renamed:\n{old_title} → {new_title}")
+    else:
+        await update.message.reply_text(
+            f"Goal not found: '{old_title}'\n"
+            "Use /goals_list to see exact goal titles."
         )
 
 

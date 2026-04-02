@@ -8,7 +8,9 @@ from jacbotcoach.bot.conversations import goals_conversation
 from jacbotcoach.bot.handlers import (
     done_command,
     focus_command,
+    goal_delete_command,
     goal_done_command,
+    goal_edit_command,
     goal_status_command,
     goals_categories_command,
     goals_list_command,
@@ -105,6 +107,8 @@ def main_sync() -> None:
     app.add_handler(CommandHandler("unfocus", unfocus_command))
     app.add_handler(CommandHandler("goal_done", goal_done_command))
     app.add_handler(CommandHandler("goal_status", goal_status_command))
+    app.add_handler(CommandHandler("goal_edit", goal_edit_command))
+    app.add_handler(CommandHandler("goal_delete", goal_delete_command))
     app.add_handler(CommandHandler("promote", promote_command))
     app.add_handler(goals_conversation)
     app.add_handler(coach_conversation)
