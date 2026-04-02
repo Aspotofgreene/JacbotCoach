@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 from telegram.ext import Application, CommandHandler
@@ -24,12 +23,11 @@ logger = logging.getLogger(__name__)
 
 async def _post_init(application: Application) -> None:
     """
-    Called by python-telegram-bot after the Application starts its event loop.
-    Safe place to start the AsyncIOScheduler (same loop as run_polling).
+    Called by python-telegram-bot after it starts its internal event loop.
+    Safe place to run async startup tasks and start the scheduler.
     """
     settings = application.bot_data["settings"]
 
-    # --- Health checks ---
     mac_ok = await OllamaClient(settings.ollama_mac_url, settings.ollama_mac_model).health_check()
     desktop_ok = await OllamaClient(
         settings.ollama_desktop_url, settings.ollama_desktop_model
@@ -45,7 +43,6 @@ async def _post_init(application: Application) -> None:
     if not desktop_ok:
         logger.warning("Desktop Ollama unreachable — heavy tasks will fall back to Mac mini.")
 
-    # --- Start scheduler ---
     scheduler = build_scheduler(application)
     scheduler.start()
     application.bot_data["scheduler"] = scheduler
@@ -60,10 +57,6 @@ async def _post_shutdown(application: Application) -> None:
 
 
 def main_sync() -> None:
-    asyncio.run(_main())
-
-
-async def _main() -> None:
     settings = get_settings()
 
     app = (
@@ -82,7 +75,8 @@ async def _main() -> None:
     app.add_handler(goals_conversation)
 
     logger.info("Starting JacbotCoach (polling)...")
-    await app.run_polling(drop_pending_updates=True)
+    # run_polling() manages its own event loop — do NOT wrap in asyncio.run()
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
