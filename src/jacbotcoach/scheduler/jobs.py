@@ -77,9 +77,10 @@ async def run_daily_job(application: Application) -> None:
             spawned.append((task, result.session_id))
             logger.info("Spawned session %s for: %s", result.session_id, task)
         except Exception as e:
-            logger.error("Failed to spawn session for '%s': %s", task, e)
+            err_str = str(e)
+            logger.error("Failed to spawn session for '%s': %s", task, err_str)
             await log.append(task, status="SPAWN_FAILED")
-            failed.append(task)
+            failed.append((task, err_str))
 
     # --- Step 6: Telegram notification ---
     lines = [f"Good morning. {len(spawned)} task(s) queued:\n"]
@@ -88,8 +89,9 @@ async def run_daily_job(application: Application) -> None:
         lines.append(f"   Session: {sid}")
     if failed:
         lines.append(f"\n⚠️ {len(failed)} task(s) failed to spawn:")
-        for task in failed:
+        for task, err in failed:
             lines.append(f"   - {task}")
+            lines.append(f"     Error: {err[:120]}")
 
     await application.bot.send_message(
         chat_id=settings.telegram_allowed_user_id,

@@ -4,10 +4,14 @@ from telegram.ext import Application, CommandHandler
 
 from jacbotcoach.bot.conversations import goals_conversation
 from jacbotcoach.bot.handlers import (
+    done_command,
+    goals_categories_command,
+    goals_list_command,
     start_command,
     status_command,
     tasks_command,
     trigger_command,
+    update_command,
 )
 from jacbotcoach.config import get_settings
 from jacbotcoach.llm.client import OllamaClient
@@ -70,8 +74,12 @@ def main_sync() -> None:
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("goals_list", goals_list_command))
+    app.add_handler(CommandHandler("goals_cat", goals_categories_command))
     app.add_handler(CommandHandler("tasks", tasks_command))
     app.add_handler(CommandHandler("trigger", trigger_command))
+    app.add_handler(CommandHandler("done", done_command))
+    app.add_handler(CommandHandler("update", update_command))
     app.add_handler(goals_conversation)
 
     logger.info("Starting JacbotCoach (polling)...")

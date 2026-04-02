@@ -154,10 +154,11 @@ class OpenClawClient:
             logger.info("OpenClaw agent running in background (pid=%d, id=%s)", proc.pid, session_id)
             return SessionResult(session_id=session_id, status="running", output=f"pid={proc.pid}")
 
-    def _build_agent_cmd(self, prompt: str, thinking: str = "high") -> list[str]:
+    def _build_agent_cmd(self, prompt: str, thinking: str = "high", agent: str = "main") -> list[str]:
         """Build the confirmed `openclaw agent` command."""
         return [
             self._bin, "agent",
+            "--agent", agent,
             "--message", prompt,
             "--thinking", thinking,
             "--json",
