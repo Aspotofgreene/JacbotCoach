@@ -56,31 +56,96 @@ class LLMRouter:
             "into a structured goal plan using EXACTLY this markdown format:\n\n"
             "# Goals\n\n"
             "## Projects — Short Term (1–2 months)\n"
-            "| Difficulty | Goal | Notes |\n"
-            "|---|---|---|\n"
-            "| Easy/Medium/Hard | Action-oriented goal title | Brief context |\n\n"
+            "| Status | Difficulty | Goal | Notes |\n"
+            "|---|---|---|---|\n"
+            "| Active | Easy/Medium/Hard | Action-oriented goal title | Brief context |\n\n"
             "## Projects — Long Term (3+ months)\n"
-            "| Difficulty | Goal | Notes |\n"
-            "|---|---|---|\n"
-            "| Easy/Medium/Hard | Action-oriented goal title | Brief context |\n\n"
+            "| Status | Difficulty | Goal | Notes |\n"
+            "|---|---|---|---|\n"
+            "| Active | Easy/Medium/Hard | Action-oriented goal title | Brief context |\n\n"
             "## Habits & Ongoing\n"
-            "| Frequency | Habit | Why |\n"
-            "|---|---|---|\n"
-            "| Daily/Weekly/Monthly | Habit description | Benefit |\n\n"
+            "| Status | Frequency | Habit | Why |\n"
+            "|---|---|---|---|\n"
+            "| Active | Daily/Weekly/Monthly | Habit description | Benefit |\n\n"
             "## Open Backlog\n"
             "- Ideas not yet classified\n\n"
+            "## Completed\n"
+            "(empty)\n\n"
             "Rules:\n"
             "- Rephrase vague goals into concrete, action-oriented project or habit titles\n"
             "- Classify each goal as a PROJECT (has a clear endpoint) or HABIT (ongoing/recurring)\n"
             "- Short term = can realistically be completed in 1-2 months\n"
             "- Long term = requires 3+ months\n"
             "- Difficulty: Easy (low effort/skill), Medium (moderate), Hard (significant effort/skill)\n"
+            "- Status options: Active | In Progress | Paused | Done\n"
+            "- Default status for all new goals: Active\n"
             "- Be concise — one row per goal\n"
             "- Total output must be under 48 lines\n"
             "- Output only the markdown, no preamble or explanation\n\n"
             f"Brain dump:\n{raw_goals}"
         )
         return await client.generate(prompt)
+
+    async def weekly_summary(self, goals: str, task_log: str, focus: str = "") -> str:
+        """
+        Heavy task: generate a weekly accomplishment digest.
+        Runs Sunday morning on desktop GPU.
+        """
+        client = await self._client_with_fallback(Complexity.HEAVY)
+        week_of = date.today().strftime("%B %d, %Y")
+        focus_section = f"\nCurrent focus goals:\n{focus}\n" if focus else ""
+        prompt = (
+            f"Week ending {week_of}. You are a personal coach writing a weekly review.\n\n"
+            f"Goals on file:\n{goals}\n"
+            f"{focus_section}"
+            f"Task log from this week:\n{task_log}\n\n"
+            "Write a concise weekly review covering:\n"
+            "1. What was accomplished (2-3 bullet points)\n"
+            "2. Which goals made progress and which are stalled\n"
+            "3. One honest observation about patterns or momentum\n"
+            "4. 2-3 recommended focus areas for next week\n\n"
+            "Keep it under 200 words. Be direct and honest, not generic.\n"
+            "Output plain text, no markdown headers."
+        )
+        return await client.generate(prompt, timeout=180.0)
+
+    async def coach_response(self, message: str, goals: str, history: list[dict]) -> str:
+        """
+        Light task: respond to a free-form coaching message.
+        Runs on Mac mini for fast back-and-forth.
+        """
+        client = self._client(Complexity.LIGHT)
+        history_text = "\n".join(
+            f"{'You' if m['role'] == 'user' else 'Coach'}: {m['content']}"
+            for m in history[-6:]  # last 3 exchanges
+        )
+        prompt = (
+            "You are a direct, practical life and productivity coach. "
+            "You know the user's goals and give honest, actionable advice.\n\n"
+            f"User's goals:\n{goals}\n\n"
+            + (f"Recent conversation:\n{history_text}\n\n" if history_text else "")
+            + f"User: {message}\n\n"
+            "Coach (respond in 2-4 sentences, be direct and specific):"
+        )
+        return await client.generate(prompt, timeout=120.0)
+
+    async def classify_backlog_item(self, item: str, goals: str) -> str:
+        """
+        Light task: suggest which category a backlog item belongs to.
+        """
+        client = self._client(Complexity.LIGHT)
+        prompt = (
+            "You are a goal planner. Given this backlog item, suggest how to classify it.\n\n"
+            f"Backlog item: {item}\n\n"
+            f"Existing goals for context:\n{goals}\n\n"
+            "Output a single JSON object with these fields:\n"
+            '{"category": "Short Term Projects|Long Term Projects|Habits & Ongoing",'
+            ' "difficulty": "Easy|Medium|Hard",'
+            ' "rephrased": "Action-oriented title",'
+            ' "notes": "Brief context"}\n\n'
+            "Output only the JSON, no other text."
+        )
+        return await client.generate(prompt, timeout=60.0)
 
     async def generate_daily_tasks(self, autonomous_content: str) -> list[str]:
         """

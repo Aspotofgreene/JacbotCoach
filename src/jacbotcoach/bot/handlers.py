@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 from telegram import Update
@@ -5,6 +6,7 @@ from telegram.ext import ContextTypes
 
 from jacbotcoach.config import get_settings
 from jacbotcoach.storage.autonomous import AutonomousStore
+from jacbotcoach.storage.focus import FocusStore
 from jacbotcoach.storage.tasks_log import TasksLog
 
 logger = logging.getLogger(__name__)
@@ -23,15 +25,25 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(
         "JacbotCoach online.\n\n"
         "Goals:\n"
-        "  /goals        — brain dump your goals\n"
-        "  /goals_list   — view all goals in a flat list\n"
-        "  /goals_cat    — view goals by category\n"
-        "  /status       — view the full goals file\n\n"
+        "  /goals           — brain dump your goals\n"
+        "  /goals_list      — view all goals (flat list)\n"
+        "  /goals_cat       — view goals by category\n"
+        "  /goal_done <title> — mark a goal complete\n"
+        "  /goal_status <title> <status> — update goal status\n"
+        "  /promote <item>  — move backlog item to active goals\n"
+        "  /status          — view the full goals file\n\n"
+        "Focus:\n"
+        "  /focus           — see current focus goals\n"
+        "  /focus <goals>   — set weekly focus goals\n"
+        "  /unfocus         — clear focus\n\n"
         "Tasks:\n"
-        "  /tasks        — view today's task queue\n"
-        "  /trigger      — run task generation now\n"
-        "  /done <task>  — mark a task complete\n"
-        "  /update <msg> — log a progress update\n"
+        "  /tasks           — view today's tasks\n"
+        "  /trigger         — run task generation now\n"
+        "  /done <task>     — mark a task complete\n"
+        "  /update <msg>    — log a progress update\n\n"
+        "Coaching:\n"
+        "  /coach           — start a coaching conversation\n"
+        "  /endcoach        — end coaching session\n"
     )
 
 
@@ -198,3 +210,158 @@ async def trigger_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except Exception as e:
         logger.exception("Manual trigger failed")
         await update.message.reply_text(f"Error during task generation: {e}")
+
+
+async def focus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /focus          — show current focus goals
+    /focus <text>   — set weekly focus goals
+    """
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    focus_store = FocusStore(settings.autonomous_md_path.parent / "focus.md")
+    text = " ".join(context.args) if context.args else ""
+
+    if text:
+        focus_store.set(text)
+        await update.message.reply_text(
+            f"🎯 Focus set:\n{text}\n\n"
+            "Tomorrow's task generation will prioritize these goals.\n"
+            "Use /unfocus to clear."
+        )
+    else:
+        current = focus_store.read()
+        if current:
+            await update.message.reply_text(f"🎯 Current focus:\n{current}")
+        else:
+            await update.message.reply_text(
+                "No focus set. Use /focus <goals> to prioritize.\n"
+                "Example: /focus Launch SaaS MVP, Daily exercise habit"
+            )
+
+
+async def unfocus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    FocusStore(settings.autonomous_md_path.parent / "focus.md").clear()
+    await update.message.reply_text("Focus cleared. All goals weighted equally.")
+
+
+async def goal_done_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Mark a goal as complete and move it to the Completed section."""
+    if not _is_allowed(update):
+        return
+    title = " ".join(context.args) if context.args else ""
+    if not title:
+        await update.message.reply_text(
+            "Usage: /goal_done <goal title>\n"
+            "Example: /goal_done Launch SaaS MVP"
+        )
+        return
+    settings = get_settings()
+    store = AutonomousStore(settings.autonomous_md_path)
+    if store.mark_goal_done(title):
+        await update.message.reply_text(
+            f"🏆 Goal marked as done and archived:\n{title}"
+        )
+    else:
+        await update.message.reply_text(
+            f"Goal not found: '{title}'\n"
+            "Use /goals_list to see exact goal titles."
+        )
+
+
+async def goal_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Update a goal's status: /goal_status <title> <status>
+    Status: Active | In Progress | Paused | Done
+    """
+    if not _is_allowed(update):
+        return
+    args = context.args or []
+    valid_statuses = {"Active", "In Progress", "Paused", "Done"}
+
+    # Last arg is status, everything before is the title
+    if len(args) < 2:
+        await update.message.reply_text(
+            "Usage: /goal_status <goal title> <status>\n"
+            "Status options: Active | In Progress | Paused | Done\n"
+            "Example: /goal_status Launch SaaS MVP In Progress"
+        )
+        return
+
+    # Try matching status from the end
+    status = None
+    title_parts = list(args)
+    for n in (2, 1):
+        candidate = " ".join(args[-n:])
+        if candidate in valid_statuses:
+            status = candidate
+            title_parts = args[:-n]
+            break
+
+    if not status or not title_parts:
+        await update.message.reply_text(
+            f"Valid statuses: {', '.join(valid_statuses)}\n"
+            "Example: /goal_status Launch SaaS MVP In Progress"
+        )
+        return
+
+    title = " ".join(title_parts)
+    settings = get_settings()
+    store = AutonomousStore(settings.autonomous_md_path)
+    if store.update_goal_status(title, status):
+        await update.message.reply_text(f"Updated '{title}' → {status}")
+    else:
+        await update.message.reply_text(
+            f"Goal not found: '{title}'\nUse /goals_list to see exact titles."
+        )
+
+
+async def promote_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Move a backlog item into active goals with LLM classification.
+    /promote <item text>
+    """
+    if not _is_allowed(update):
+        return
+    item = " ".join(context.args) if context.args else ""
+    if not item:
+        await update.message.reply_text(
+            "Usage: /promote <backlog item>\n"
+            "Example: /promote Learn Spanish"
+        )
+        return
+
+    settings = get_settings()
+    store = AutonomousStore(settings.autonomous_md_path)
+    goals = store.read()
+
+    await update.message.reply_text(f"Classifying '{item}'...")
+
+    try:
+        from jacbotcoach.llm.router import LLMRouter
+        router = LLMRouter()
+        raw = await router.classify_backlog_item(item, goals)
+        data = json.loads(raw)
+        category = data.get("category", "Short Term Projects")
+        difficulty = data.get("difficulty", "Medium")
+        rephrased = data.get("rephrased", item)
+        notes = data.get("notes", "")
+    except Exception as e:
+        logger.warning("LLM classification failed (%s), using defaults", e)
+        category, difficulty, rephrased, notes = "Short Term Projects", "Medium", item, ""
+
+    if store.promote_backlog_item(item, category, difficulty, rephrased, notes):
+        await update.message.reply_text(
+            f"✅ Promoted to {category}:\n"
+            f"[{difficulty}] {rephrased}"
+            + (f"\n{notes}" if notes else "")
+        )
+    else:
+        await update.message.reply_text(
+            f"Item not found in backlog: '{item}'\n"
+            "Use /status to check the exact text in Open Backlog."
+        )

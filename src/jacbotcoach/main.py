@@ -1,22 +1,30 @@
+import asyncio
 import logging
 
 from telegram.ext import Application, CommandHandler
 
+from jacbotcoach.bot.coach import coach_conversation
 from jacbotcoach.bot.conversations import goals_conversation
 from jacbotcoach.bot.handlers import (
     done_command,
+    focus_command,
+    goal_done_command,
+    goal_status_command,
     goals_categories_command,
     goals_list_command,
+    promote_command,
     start_command,
     status_command,
     tasks_command,
     trigger_command,
+    unfocus_command,
     update_command,
 )
 from jacbotcoach.config import get_settings
 from jacbotcoach.llm.client import OllamaClient
 from jacbotcoach.openclaw.client import OpenClawClient
 from jacbotcoach.scheduler.jobs import build_scheduler
+from jacbotcoach.watcher import watch_tasks_log
 
 logging.basicConfig(
     format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
@@ -50,6 +58,16 @@ async def _post_init(application: Application) -> None:
     scheduler = build_scheduler(application)
     scheduler.start()
     application.bot_data["scheduler"] = scheduler
+
+    # Start background task to watch tasks-log.md for completions
+    watcher_task = asyncio.create_task(
+        watch_tasks_log(
+            settings.tasks_log_path,
+            application.bot,
+            settings.telegram_allowed_user_id,
+        )
+    )
+    application.bot_data["watcher_task"] = watcher_task
     logger.info("JacbotCoach ready.")
 
 
@@ -58,6 +76,9 @@ async def _post_shutdown(application: Application) -> None:
     if scheduler and scheduler.running:
         scheduler.shutdown(wait=False)
         logger.info("Scheduler stopped.")
+    watcher_task = application.bot_data.get("watcher_task")
+    if watcher_task and not watcher_task.done():
+        watcher_task.cancel()
 
 
 def main_sync() -> None:
@@ -80,7 +101,13 @@ def main_sync() -> None:
     app.add_handler(CommandHandler("trigger", trigger_command))
     app.add_handler(CommandHandler("done", done_command))
     app.add_handler(CommandHandler("update", update_command))
+    app.add_handler(CommandHandler("focus", focus_command))
+    app.add_handler(CommandHandler("unfocus", unfocus_command))
+    app.add_handler(CommandHandler("goal_done", goal_done_command))
+    app.add_handler(CommandHandler("goal_status", goal_status_command))
+    app.add_handler(CommandHandler("promote", promote_command))
     app.add_handler(goals_conversation)
+    app.add_handler(coach_conversation)
 
     logger.info("Starting JacbotCoach (polling)...")
     # run_polling() manages its own event loop — do NOT wrap in asyncio.run()
