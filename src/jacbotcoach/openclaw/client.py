@@ -2,18 +2,17 @@
 OpenClaw HTTP client.
 
 OpenClaw runs on localhost:18789 (loopback only).
-API discovery notes:
-  GET  /health                     → {"ok": true, "status": "live"}
-  POST /sessions                   → create a new session (returns session ID)
-  POST /sessions/{id}/messages     → send a message to a session
+Confirmed API endpoints (from /opt/homebrew/lib/node_modules/openclaw/dist/):
 
-TODO: Verify the exact session endpoint paths by checking:
-  1. The OpenClaw web UI at http://localhost:18789 → Settings → API
-  2. Or run: curl http://localhost:18789/sessions
-             curl http://localhost:18789/v1/sessions
-  3. The token is in the OpenClaw UI under Settings → API Token
+  GET  /api/v1/ping                 → health check
+  GET  /api/v1/server/info          → server info (may include token/auth details)
+  POST /api/v1/chat/new             → create a new chat session (sessions_spawn equivalent)
+  POST /api/v1/message/text         → send a text message to a chat (sessions_send equivalent)
+  GET  /api/v1/chat/query           → query/poll a chat session
+  GET  /api/messages                → list messages
 
-The client is designed so only this file changes when the exact paths are confirmed.
+Authentication: token passed as query param ?token=<OPENCLAW_TOKEN>
+Find your token via: curl http://localhost:18789/api/v1/server/info
 """
 
 import logging
@@ -23,10 +22,11 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Known-working API paths (update if needed after checking the OpenClaw UI)
-_SESSIONS_PATH = "/sessions"
-_MESSAGES_SUFFIX = "/messages"
-_HEALTH_PATH = "/health"
+_PING_PATH = "/api/v1/ping"
+_SERVER_INFO_PATH = "/api/v1/server/info"
+_CHAT_NEW_PATH = "/api/v1/chat/new"
+_MESSAGE_TEXT_PATH = "/api/v1/message/text"
+_CHAT_QUERY_PATH = "/api/v1/chat/query"
 
 
 @dataclass
@@ -44,10 +44,11 @@ class MessageResult:
 
 class OpenClawClient:
     """
-    Thin async HTTP wrapper around OpenClaw's session API.
+    Async HTTP client for OpenClaw's REST API (localhost:18789).
 
-    All calls go to localhost:18789 (loopback).
-    Auth: token is appended as ?token=<OPENCLAW_TOKEN> query param.
+    Endpoint mapping:
+      sessions_spawn  →  POST /api/v1/chat/new
+      sessions_send   →  POST /api/v1/message/text
     """
 
     def __init__(self, base_url: str, token: str = "") -> None:
@@ -61,13 +62,22 @@ class OpenClawClient:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(
-                    f"{self.base_url}{_HEALTH_PATH}",
+                    f"{self.base_url}{_PING_PATH}",
                     params=self._params(),
                 )
-                data = resp.json()
-                return data.get("ok") is True or data.get("status") == "live"
+                return resp.status_code == 200
         except Exception:
             return False
+
+    async def server_info(self) -> dict:
+        """Fetch server info — useful for discovering the auth token."""
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"{self.base_url}{_SERVER_INFO_PATH}",
+                params=self._params(),
+            )
+            resp.raise_for_status()
+            return resp.json()
 
     async def create_session(
         self,
@@ -75,27 +85,31 @@ class OpenClawClient:
         label: str = "",
     ) -> SessionResult:
         """
-        Spawn a new OpenClaw session with an initial prompt.
+        Create a new OpenClaw chat session with an initial prompt.
+        Equivalent to sessions_spawn.
 
-        This is the HTTP equivalent of sessions_spawn — creates an isolated
-        session and starts it with the given prompt as the first message.
+        POST /api/v1/chat/new
         """
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
-                f"{self.base_url}{_SESSIONS_PATH}",
+                f"{self.base_url}{_CHAT_NEW_PATH}",
                 params=self._params(),
-                json={"prompt": prompt, "label": label},
+                json={"text": prompt, "label": label},
             )
-            if resp.status_code == 404:
-                raise RuntimeError(
-                    f"OpenClaw sessions endpoint not found at {_SESSIONS_PATH}. "
-                    "Check the correct path in the OpenClaw UI under Settings → API "
-                    "and update _SESSIONS_PATH in openclaw/client.py."
-                )
             resp.raise_for_status()
             data = resp.json()
-            session_id = data.get("id") or data.get("session_id") or data.get("runId", "")
-            return SessionResult(session_id=str(session_id), status=data.get("status", "created"))
+            # Field names may vary — handle common variants
+            session_id = (
+                data.get("id")
+                or data.get("chatId")
+                or data.get("chat_id")
+                or data.get("sessionId")
+                or data.get("runId", "")
+            )
+            return SessionResult(
+                session_id=str(session_id),
+                status=data.get("status", "created"),
+            )
 
     async def send_message(
         self,
@@ -103,32 +117,33 @@ class OpenClawClient:
         message: str,
     ) -> MessageResult:
         """
-        Send a follow-up message to an existing OpenClaw session.
+        Send a follow-up message to an existing OpenClaw chat session.
         Equivalent to sessions_send.
+
+        POST /api/v1/message/text
         """
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
-                f"{self.base_url}{_SESSIONS_PATH}/{session_id}{_MESSAGES_SUFFIX}",
+                f"{self.base_url}{_MESSAGE_TEXT_PATH}",
                 params=self._params(),
-                json={"message": message},
+                json={"chatId": session_id, "text": message},
             )
             resp.raise_for_status()
             data = resp.json()
             return MessageResult(
                 session_id=session_id,
-                response=data.get("response", ""),
+                response=data.get("response") or data.get("text", ""),
                 status=data.get("status", "sent"),
             )
 
-    async def list_sessions(self) -> list[dict]:
-        """List all active OpenClaw sessions (useful for debugging)."""
+    async def query_session(self, session_id: str) -> dict:
+        """Poll the status/output of a chat session."""
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
-                f"{self.base_url}{_SESSIONS_PATH}",
-                params=self._params(),
+                f"{self.base_url}{_CHAT_QUERY_PATH}",
+                params={**self._params(), "chatId": session_id},
             )
             if resp.status_code == 404:
-                return []
+                return {}
             resp.raise_for_status()
-            data = resp.json()
-            return data if isinstance(data, list) else data.get("sessions", [])
+            return resp.json()
