@@ -2,24 +2,24 @@
 OpenClaw integration.
 
 OpenClaw runs as 'openclaw-gateway' on localhost:18789 (loopback only).
-Installed at: /opt/homebrew/lib/node_modules/openclaw/
+Installed at: /opt/homebrew/lib/node_modules/openclaw/  (v2026.4.1)
 
 Integration strategy:
-  PRIMARY:  CLI subprocess — `openclaw agent` runs one agent turn via the gateway.
-            No HTTP auth required. Works immediately.
+  PRIMARY:  CLI subprocess — `openclaw agent --message "..." --json`
+            No HTTP auth required. Uses stored credentials from ~/.openclaw/
+            Credentials and sessions live in ~/.openclaw/agents/main/
 
-  FALLBACK: HTTP API — /api/channels (and others) exist but require a token.
-            Token location: ~/.openclaw/ (check with `ls ~/.openclaw/`)
+  FALLBACK: HTTP API — /api/channels requires a token (returns Unauthorized).
+            Token location: ~/.openclaw/openclaw.json or identity/device-auth.json
 
-CLI usage (confirmed from `openclaw --help`):
-  openclaw agent          Run one agent turn via the Gateway
-  openclaw agents *       Manage isolated agents
-
-HTTP API (needs token, passed as ?token=<value>):
-  GET  /health            → {"ok": true, "status": "live"}
-  GET  /api/channels      → Unauthorized without token (endpoint exists)
-
-TODO: Run `openclaw agent --help` and paste output to finalize CLI params.
+Confirmed CLI flags (from `openclaw agent --help`):
+  --message <text>        The prompt / task to run         ← main flag
+  --session-id <id>       Target an existing session       ← for follow-ups
+  --thinking <level>      off|minimal|low|medium|high|xhigh
+  --timeout <seconds>     Default 600s
+  --json                  Structured JSON output
+  --agent <id>            Use a specific agent (default: main)
+  --deliver               Send reply back to the configured channel
 """
 
 import asyncio
@@ -106,22 +106,23 @@ class OpenClawClient:
         prompt: str,
         label: str = "",
         working_dir: str | None = None,
+        thinking: str = "high",
     ) -> SessionResult:
         """
-        Run an autonomous agent task via `openclaw agent`.
+        Spawn an autonomous OpenClaw agent task.
 
-        This spawns an OpenClaw agent that executes the given prompt as one
-        complete agent turn through the local gateway.
-
-        TODO: Run `openclaw agent --help` to confirm the exact flag names.
-              Common patterns for similar tools:
-                openclaw agent --prompt "..." --session-key my-task
-                openclaw agent "..." --workspace /path/to/dir
+        Uses `openclaw agent --message "<prompt>" --thinking high --json`.
+        The process runs in the background (default timeout 600s in OpenClaw).
+        The prompt should instruct the agent to append a ✅ line to
+        memory/tasks-log.md when done.
         """
-        cmd = self._build_agent_cmd(prompt, label, working_dir)
-        logger.info("Spawning OpenClaw agent: %s", " ".join(cmd[:3]) + " ...")
+        import json as _json
+        import re as _re
+        from datetime import datetime
 
-        # Run in background — don't wait for completion (tasks can take hours)
+        cmd = self._build_agent_cmd(prompt, thinking)
+        logger.info("Spawning OpenClaw agent: label=%r thinking=%s", label, thinking)
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -129,58 +130,38 @@ class OpenClawClient:
             cwd=working_dir,
         )
 
-        # Give it 3s to fail fast (e.g. auth error, bad args)
+        # Wait up to 10s for the gateway to acknowledge the task and return
+        # a session ID. openclaw agent --json returns structured output.
+        # If it takes longer than 10s, we detach and track by PID.
         try:
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=3.0
+                proc.communicate(), timeout=10.0
             )
-            if proc.returncode is not None and proc.returncode != 0:
+            raw = stdout.decode(errors="replace").strip()
+            if proc.returncode != 0:
                 err = stderr.decode(errors="replace").strip()
                 raise RuntimeError(
-                    f"openclaw agent exited with code {proc.returncode}: {err}"
+                    f"openclaw agent failed (exit {proc.returncode}): {err or raw}"
                 )
-            output = stdout.decode(errors="replace").strip()
+            # Parse session ID from JSON output
+            session_id = _extract_session_id(raw) or _slugify(label) or f"task-{datetime.now().strftime('%H%M%S')}"
+            logger.info("OpenClaw session started: %s", session_id)
+            return SessionResult(session_id=session_id, status="running", output=raw)
+
         except asyncio.TimeoutError:
-            # Still running — that's expected for long tasks
-            output = f"agent running (pid {proc.pid})"
-            logger.info("OpenClaw agent running in background (pid %d)", proc.pid)
+            # Still running — this is normal for long tasks
+            session_id = _slugify(label) or f"pid-{proc.pid}"
+            logger.info("OpenClaw agent running in background (pid=%d, id=%s)", proc.pid, session_id)
+            return SessionResult(session_id=session_id, status="running", output=f"pid={proc.pid}")
 
-        session_id = label.replace(" ", "-")[:40] or f"pid-{proc.pid}"
-        return SessionResult(
-            session_id=session_id,
-            status="running",
-            output=output,
-        )
-
-    def _build_agent_cmd(
-        self,
-        prompt: str,
-        label: str,
-        working_dir: str | None,
-    ) -> list[str]:
-        """
-        Build the `openclaw agent` command.
-
-        TODO: Update these flags once `openclaw agent --help` output is known.
-              Replace the placeholder flag names with the real ones.
-        """
-        cmd = [self._bin, "agent"]
-
-        # Common flag patterns — update after running `openclaw agent --help`
-        # Option A: positional prompt
-        cmd.append(prompt)
-
-        # Option B: --prompt flag (uncomment if needed)
-        # cmd += ["--prompt", prompt]
-
-        if label:
-            # Try --session-key or --label (update after checking --help)
-            cmd += ["--session-key", label[:40]]
-
-        if self._token:
-            cmd += ["--token", self._token]
-
-        return cmd
+    def _build_agent_cmd(self, prompt: str, thinking: str = "high") -> list[str]:
+        """Build the confirmed `openclaw agent` command."""
+        return [
+            self._bin, "agent",
+            "--message", prompt,
+            "--thinking", thinking,
+            "--json",
+        ]
 
     # ------------------------------------------------------------------ #
     # Send follow-up message (secondary path)                             #
@@ -190,70 +171,76 @@ class OpenClawClient:
         self,
         session_id: str,
         message: str,
+        thinking: str = "medium",
     ) -> MessageResult:
         """
-        Send a follow-up message to an existing session via HTTP API.
-        Requires the auth token to be set.
+        Send a follow-up message to an existing OpenClaw session via CLI.
 
-        TODO: Confirm the correct endpoint after getting the auth token.
+        Uses: openclaw agent --session-id <id> --message "<text>" --json
         """
-        if not self._token:
-            logger.warning(
-                "send_message called without token — "
-                "set OPENCLAW_TOKEN in .env to enable HTTP API"
+        cmd = [
+            self._bin, "agent",
+            "--session-id", session_id,
+            "--message", message,
+            "--thinking", thinking,
+            "--json",
+        ]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            return MessageResult(
-                session_id=session_id,
-                response="(token not set — HTTP API unavailable)",
-                status="skipped",
-            )
-
-        params = {"token": self._token}
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            # Try the most likely endpoint paths
-            for path in [
-                f"/api/channels/message",
-                f"/api/messages",
-            ]:
-                try:
-                    resp = await client.post(
-                        f"{self.base_url}{path}",
-                        params=params,
-                        json={"sessionId": session_id, "text": message},
-                    )
-                    if resp.status_code != 404:
-                        resp.raise_for_status()
-                        data = resp.json()
-                        return MessageResult(
-                            session_id=session_id,
-                            response=data.get("response") or data.get("text", ""),
-                            status=data.get("status", "sent"),
-                        )
-                except httpx.HTTPStatusError:
-                    continue
-
-        return MessageResult(
-            session_id=session_id,
-            response="(send_message: no working endpoint found)",
-            status="unknown",
-        )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30.0)
+            raw = stdout.decode(errors="replace").strip()
+            if proc.returncode != 0:
+                err = stderr.decode(errors="replace").strip()
+                raise RuntimeError(f"openclaw agent --session-id failed: {err or raw}")
+            return MessageResult(session_id=session_id, response=raw, status="sent")
+        except asyncio.TimeoutError:
+            return MessageResult(session_id=session_id, response="(timeout)", status="timeout")
 
     async def list_sessions(self) -> list[dict]:
-        """List sessions via HTTP API (requires token)."""
-        if not self._token:
-            return []
+        """List sessions via CLI: openclaw agents list."""
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(
-                    f"{self.base_url}/api/channels",
-                    params={"token": self._token},
-                )
-                if resp.status_code in (401, 403):
-                    logger.warning("OpenClaw token rejected — check OPENCLAW_TOKEN in .env")
-                    return []
-                resp.raise_for_status()
-                data = resp.json()
-                return data if isinstance(data, list) else data.get("channels", [])
+            proc = await asyncio.create_subprocess_exec(
+                self._bin, "agents", "list",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+            raw = stdout.decode(errors="replace").strip()
+            # Output is a table — just return lines as dicts for now
+            return [{"raw": line} for line in raw.splitlines() if line.strip()]
         except Exception as e:
             logger.debug("list_sessions failed: %s", e)
             return []
+
+
+# ------------------------------------------------------------------ #
+# Helpers                                                             #
+# ------------------------------------------------------------------ #
+
+def _extract_session_id(json_output: str) -> str:
+    """Pull session ID from openclaw agent --json output."""
+    import json, re
+    # Try JSON parse first
+    try:
+        data = json.loads(json_output)
+        return str(
+            data.get("sessionId")
+            or data.get("session_id")
+            or data.get("id")
+            or ""
+        )
+    except Exception:
+        pass
+    # Fallback: regex scan
+    match = re.search(r'"(?:sessionId|session_id|id)"\s*:\s*"([^"]+)"', json_output)
+    return match.group(1) if match else ""
+
+
+def _slugify(text: str) -> str:
+    """Convert label text to a safe session ID slug."""
+    import re
+    return re.sub(r"[^a-z0-9-]", "-", text.lower())[:40].strip("-")
