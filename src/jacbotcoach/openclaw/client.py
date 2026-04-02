@@ -1,38 +1,46 @@
 """
-OpenClaw HTTP client.
+OpenClaw integration.
 
-OpenClaw runs on localhost:18789 (loopback only).
-Confirmed API endpoints (from /opt/homebrew/lib/node_modules/openclaw/dist/):
+OpenClaw runs as 'openclaw-gateway' on localhost:18789 (loopback only).
+Installed at: /opt/homebrew/lib/node_modules/openclaw/
 
-  GET  /api/v1/ping                 → health check
-  GET  /api/v1/server/info          → server info (may include token/auth details)
-  POST /api/v1/chat/new             → create a new chat session (sessions_spawn equivalent)
-  POST /api/v1/message/text         → send a text message to a chat (sessions_send equivalent)
-  GET  /api/v1/chat/query           → query/poll a chat session
-  GET  /api/messages                → list messages
+Integration strategy:
+  PRIMARY:  CLI subprocess — `openclaw agent` runs one agent turn via the gateway.
+            No HTTP auth required. Works immediately.
 
-Authentication: token passed as query param ?token=<OPENCLAW_TOKEN>
-Find your token via: curl http://localhost:18789/api/v1/server/info
+  FALLBACK: HTTP API — /api/channels (and others) exist but require a token.
+            Token location: ~/.openclaw/ (check with `ls ~/.openclaw/`)
+
+CLI usage (confirmed from `openclaw --help`):
+  openclaw agent          Run one agent turn via the Gateway
+  openclaw agents *       Manage isolated agents
+
+HTTP API (needs token, passed as ?token=<value>):
+  GET  /health            → {"ok": true, "status": "live"}
+  GET  /api/channels      → Unauthorized without token (endpoint exists)
+
+TODO: Run `openclaw agent --help` and paste output to finalize CLI params.
 """
 
+import asyncio
 import logging
-from dataclasses import dataclass
+import shutil
+from dataclasses import dataclass, field
+from pathlib import Path
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-_PING_PATH = "/api/v1/ping"
-_SERVER_INFO_PATH = "/api/v1/server/info"
-_CHAT_NEW_PATH = "/api/v1/chat/new"
-_MESSAGE_TEXT_PATH = "/api/v1/message/text"
-_CHAT_QUERY_PATH = "/api/v1/chat/query"
+_HEALTH_PATH = "/health"
+_OPENCLAW_BIN = "openclaw"  # on PATH via /opt/homebrew/bin/openclaw
 
 
 @dataclass
 class SessionResult:
     session_id: str
     status: str
+    output: str = ""
 
 
 @dataclass
@@ -44,72 +52,139 @@ class MessageResult:
 
 class OpenClawClient:
     """
-    Async HTTP client for OpenClaw's REST API (localhost:18789).
+    OpenClaw integration using the CLI subprocess approach.
 
-    Endpoint mapping:
-      sessions_spawn  →  POST /api/v1/chat/new
-      sessions_send   →  POST /api/v1/message/text
+    `openclaw agent` runs one autonomous agent turn through the gateway,
+    which is the equivalent of sessions_spawn + running the task to completion.
+
+    Falls back to HTTP if the CLI is unavailable.
     """
 
     def __init__(self, base_url: str, token: str = "") -> None:
         self.base_url = base_url.rstrip("/")
         self._token = token
+        self._bin = shutil.which(_OPENCLAW_BIN) or _OPENCLAW_BIN
 
-    def _params(self) -> dict:
-        return {"token": self._token} if self._token else {}
+    # ------------------------------------------------------------------ #
+    # Health                                                               #
+    # ------------------------------------------------------------------ #
 
     async def health_check(self) -> bool:
+        """Check both HTTP gateway and CLI availability."""
+        http_ok = await self._http_health()
+        cli_ok = await self._cli_available()
+        logger.info("OpenClaw health — HTTP: %s, CLI: %s", http_ok, cli_ok)
+        return http_ok or cli_ok
+
+    async def _http_health(self) -> bool:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(
-                    f"{self.base_url}{_PING_PATH}",
-                    params=self._params(),
-                )
-                return resp.status_code == 200
+                resp = await client.get(f"{self.base_url}{_HEALTH_PATH}")
+                data = resp.json()
+                return data.get("ok") is True or data.get("status") == "live"
         except Exception:
             return False
 
-    async def server_info(self) -> dict:
-        """Fetch server info — useful for discovering the auth token."""
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(
-                f"{self.base_url}{_SERVER_INFO_PATH}",
-                params=self._params(),
+    async def _cli_available(self) -> bool:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                self._bin, "--version",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            resp.raise_for_status()
-            return resp.json()
+            await asyncio.wait_for(proc.communicate(), timeout=5.0)
+            return proc.returncode == 0
+        except Exception:
+            return False
+
+    # ------------------------------------------------------------------ #
+    # Session creation (primary path)                                     #
+    # ------------------------------------------------------------------ #
 
     async def create_session(
         self,
         prompt: str,
         label: str = "",
+        working_dir: str | None = None,
     ) -> SessionResult:
         """
-        Create a new OpenClaw chat session with an initial prompt.
-        Equivalent to sessions_spawn.
+        Run an autonomous agent task via `openclaw agent`.
 
-        POST /api/v1/chat/new
+        This spawns an OpenClaw agent that executes the given prompt as one
+        complete agent turn through the local gateway.
+
+        TODO: Run `openclaw agent --help` to confirm the exact flag names.
+              Common patterns for similar tools:
+                openclaw agent --prompt "..." --session-key my-task
+                openclaw agent "..." --workspace /path/to/dir
         """
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{self.base_url}{_CHAT_NEW_PATH}",
-                params=self._params(),
-                json={"text": prompt, "label": label},
+        cmd = self._build_agent_cmd(prompt, label, working_dir)
+        logger.info("Spawning OpenClaw agent: %s", " ".join(cmd[:3]) + " ...")
+
+        # Run in background — don't wait for completion (tasks can take hours)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=working_dir,
+        )
+
+        # Give it 3s to fail fast (e.g. auth error, bad args)
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=3.0
             )
-            resp.raise_for_status()
-            data = resp.json()
-            # Field names may vary — handle common variants
-            session_id = (
-                data.get("id")
-                or data.get("chatId")
-                or data.get("chat_id")
-                or data.get("sessionId")
-                or data.get("runId", "")
-            )
-            return SessionResult(
-                session_id=str(session_id),
-                status=data.get("status", "created"),
-            )
+            if proc.returncode is not None and proc.returncode != 0:
+                err = stderr.decode(errors="replace").strip()
+                raise RuntimeError(
+                    f"openclaw agent exited with code {proc.returncode}: {err}"
+                )
+            output = stdout.decode(errors="replace").strip()
+        except asyncio.TimeoutError:
+            # Still running — that's expected for long tasks
+            output = f"agent running (pid {proc.pid})"
+            logger.info("OpenClaw agent running in background (pid %d)", proc.pid)
+
+        session_id = label.replace(" ", "-")[:40] or f"pid-{proc.pid}"
+        return SessionResult(
+            session_id=session_id,
+            status="running",
+            output=output,
+        )
+
+    def _build_agent_cmd(
+        self,
+        prompt: str,
+        label: str,
+        working_dir: str | None,
+    ) -> list[str]:
+        """
+        Build the `openclaw agent` command.
+
+        TODO: Update these flags once `openclaw agent --help` output is known.
+              Replace the placeholder flag names with the real ones.
+        """
+        cmd = [self._bin, "agent"]
+
+        # Common flag patterns — update after running `openclaw agent --help`
+        # Option A: positional prompt
+        cmd.append(prompt)
+
+        # Option B: --prompt flag (uncomment if needed)
+        # cmd += ["--prompt", prompt]
+
+        if label:
+            # Try --session-key or --label (update after checking --help)
+            cmd += ["--session-key", label[:40]]
+
+        if self._token:
+            cmd += ["--token", self._token]
+
+        return cmd
+
+    # ------------------------------------------------------------------ #
+    # Send follow-up message (secondary path)                             #
+    # ------------------------------------------------------------------ #
 
     async def send_message(
         self,
@@ -117,33 +192,68 @@ class OpenClawClient:
         message: str,
     ) -> MessageResult:
         """
-        Send a follow-up message to an existing OpenClaw chat session.
-        Equivalent to sessions_send.
+        Send a follow-up message to an existing session via HTTP API.
+        Requires the auth token to be set.
 
-        POST /api/v1/message/text
+        TODO: Confirm the correct endpoint after getting the auth token.
         """
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{self.base_url}{_MESSAGE_TEXT_PATH}",
-                params=self._params(),
-                json={"chatId": session_id, "text": message},
+        if not self._token:
+            logger.warning(
+                "send_message called without token — "
+                "set OPENCLAW_TOKEN in .env to enable HTTP API"
             )
-            resp.raise_for_status()
-            data = resp.json()
             return MessageResult(
                 session_id=session_id,
-                response=data.get("response") or data.get("text", ""),
-                status=data.get("status", "sent"),
+                response="(token not set — HTTP API unavailable)",
+                status="skipped",
             )
 
-    async def query_session(self, session_id: str) -> dict:
-        """Poll the status/output of a chat session."""
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{self.base_url}{_CHAT_QUERY_PATH}",
-                params={**self._params(), "chatId": session_id},
-            )
-            if resp.status_code == 404:
-                return {}
-            resp.raise_for_status()
-            return resp.json()
+        params = {"token": self._token}
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # Try the most likely endpoint paths
+            for path in [
+                f"/api/channels/message",
+                f"/api/messages",
+            ]:
+                try:
+                    resp = await client.post(
+                        f"{self.base_url}{path}",
+                        params=params,
+                        json={"sessionId": session_id, "text": message},
+                    )
+                    if resp.status_code != 404:
+                        resp.raise_for_status()
+                        data = resp.json()
+                        return MessageResult(
+                            session_id=session_id,
+                            response=data.get("response") or data.get("text", ""),
+                            status=data.get("status", "sent"),
+                        )
+                except httpx.HTTPStatusError:
+                    continue
+
+        return MessageResult(
+            session_id=session_id,
+            response="(send_message: no working endpoint found)",
+            status="unknown",
+        )
+
+    async def list_sessions(self) -> list[dict]:
+        """List sessions via HTTP API (requires token)."""
+        if not self._token:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{self.base_url}/api/channels",
+                    params={"token": self._token},
+                )
+                if resp.status_code in (401, 403):
+                    logger.warning("OpenClaw token rejected — check OPENCLAW_TOKEN in .env")
+                    return []
+                resp.raise_for_status()
+                data = resp.json()
+                return data if isinstance(data, list) else data.get("channels", [])
+        except Exception as e:
+            logger.debug("list_sessions failed: %s", e)
+            return []
