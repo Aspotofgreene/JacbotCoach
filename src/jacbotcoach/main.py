@@ -14,6 +14,7 @@ from jacbotcoach.bot.handlers import (
     goal_status_command,
     goals_categories_command,
     goals_list_command,
+    goals_reparse_command,
     promote_command,
     start_command,
     status_command,
@@ -99,6 +100,7 @@ def main_sync() -> None:
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("goals_list", goals_list_command))
     app.add_handler(CommandHandler("goals_cat", goals_categories_command))
+    app.add_handler(CommandHandler("goals_reparse", goals_reparse_command))
     app.add_handler(CommandHandler("tasks", tasks_command))
     app.add_handler(CommandHandler("trigger", trigger_command))
     app.add_handler(CommandHandler("done", done_command))

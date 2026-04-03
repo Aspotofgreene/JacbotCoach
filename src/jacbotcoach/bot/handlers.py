@@ -38,6 +38,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "  /goals           — brain dump your goals\n"
         "  /goals_list      — view all goals (flat list)\n"
         "  /goals_cat       — view goals by category\n"
+        "  /goals_reparse   — re-structure goals through AI (fixes raw text)\n"
         "  /goal_done <title> — mark a goal complete\n"
         "  /goal_status <title> <status> — update goal status\n"
         "  /goal_edit <old> | <new> — rename a goal\n"
@@ -72,6 +73,30 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(
         f"Goals file ({lines}/50 lines):\n\n{content[:4000]}"
     )
+
+
+async def goals_reparse_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Re-run LLM structuring on whatever is currently in AUTONOMOUS.md."""
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    store = AutonomousStore(settings.autonomous_md_path)
+    if store.is_empty():
+        await update.message.reply_text("No goals found. Use /goals to add them first.")
+        return
+    raw = store.read()
+    await update.message.reply_text("Re-structuring your goals via AI… (this may take 20-30s)")
+    try:
+        from jacbotcoach.llm.router import LLMRouter
+        structured = await LLMRouter().parse_goals(raw)
+        store.write(structured)
+        lines = store.line_count()
+        await update.message.reply_text(
+            f"Done. Goals re-structured and saved ({lines} lines).\n\nUse /goals_list or /goals_cat to review."
+        )
+    except Exception as e:
+        logger.error("goals_reparse failed: %s", e)
+        await update.message.reply_text(f"Failed to re-parse goals: {e}")
 
 
 async def goals_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
