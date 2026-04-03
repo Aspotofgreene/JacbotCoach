@@ -37,7 +37,13 @@ class AutonomousStore:
 
     def is_empty(self) -> bool:
         content = self.read().strip()
-        return not content or "(empty" in content
+        if not content:
+            return True
+        # Check whether any actual goal rows exist (table rows with | separators)
+        return not any(
+            line.strip().startswith("|") and not all(c in "-| " for c in line.strip())
+            for line in content.splitlines()
+        )
 
     def mark_goal_done(self, goal_title: str) -> bool:
         """

@@ -115,11 +115,15 @@ async def goals_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     for line in content.splitlines():
         line = line.strip()
         if line.startswith("|") and "|" in line[1:]:
+            if all(c in "-| " for c in line):
+                continue  # separator row
             parts = [p.strip() for p in line.strip("|").split("|")]
-            if parts and not all(c in "-| " for c in line):
-                # Skip header rows (contain "Difficulty", "Frequency", etc.)
-                if parts[0] not in ("Difficulty", "Frequency", "Goal", "Habit", "---"):
-                    goals.append(parts)
+            if len(parts) < 3:
+                continue
+            # Skip header rows: first cell is "Status", "Difficulty", "Frequency", etc.
+            if parts[0] in ("Status", "Difficulty", "Frequency", "Goal", "Habit"):
+                continue
+            goals.append(parts)
 
     if not goals:
         await update.message.reply_text(
@@ -129,9 +133,9 @@ async def goals_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     lines = ["All goals:\n"]
     for i, row in enumerate(goals, 1):
-        # row[0]=difficulty/freq, row[1]=goal title, row[2]=notes
-        difficulty = row[0] if len(row) > 0 else ""
-        title = row[1] if len(row) > 1 else row[0]
+        # Columns: Status | Difficulty/Frequency | Goal title | Notes
+        title = row[2] if len(row) > 2 else row[0]
+        difficulty = row[1] if len(row) > 1 else ""
         lines.append(f"{i}. [{difficulty}] {title}")
 
     await update.message.reply_text("\n".join(lines)[:4000])
