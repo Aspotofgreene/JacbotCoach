@@ -108,7 +108,9 @@ Create `~/Library/LaunchAgents/com.jacbotcoach.plist`:
   <string>com.jacbotcoach</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/path/to/JacbotCoach/.venv/bin/jacbotcoach</string>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>sleep 15 &amp;&amp; exec /path/to/JacbotCoach/.venv/bin/jacbotcoach</string>
   </array>
   <key>WorkingDirectory</key>
   <string>/path/to/JacbotCoach</string>
@@ -117,12 +119,14 @@ Create `~/Library/LaunchAgents/com.jacbotcoach.plist`:
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/tmp/jacbotcoach.log</string>
+  <string>/Users/myminihome/JacbotCoach/logs/bot.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/jacbotcoach.err</string>
+  <string>/Users/myminihome/JacbotCoach/logs/bot.err</string>
 </dict>
 </plist>
 ```
+
+The 15-second delay ensures the network is available before the bot tries to connect to Telegram. Replace `/path/to/JacbotCoach` with your actual path.
 
 Then load it:
 ```bash
@@ -156,6 +160,7 @@ pip install -e .
 | `/goals` | Brain dump your goals in plain language. The LLM parses, categorizes, and structures them automatically. |
 | `/goals_list` | View all goals as a flat numbered list. |
 | `/goals_cat` | View goals grouped by category. |
+| `/goals_reparse` | Re-run AI structuring on the current goals file. Use this if goals were saved as raw text instead of a structured table (e.g. if Ollama was unreachable when you first saved them). |
 | `/status` | View the raw `AUTONOMOUS.md` file with line count. |
 
 ### Managing Individual Goals
@@ -193,6 +198,22 @@ pip install -e .
 | `/endcoach` | End the coaching session. |
 
 During a coaching session, any plain text message you send goes to the coach. The conversation history is kept for up to 10 exchanges for context.
+
+---
+
+## Troubleshooting
+
+**Bot is running but not responding to messages**
+- Check that `TELEGRAM_ALLOWED_USER_ID` in `.env` matches your actual Telegram ID (get it from [@userinfobot](https://t.me/userinfobot))
+- Make sure only one instance is running: `pgrep -fl jacbotcoach` should show exactly one PID
+- If you see multiple PIDs: `pkill -f jacbotcoach && sleep 2 && launchctl start com.jacbotcoach`
+
+**Goals saved as raw text instead of structured tables**
+- Run `/goals_reparse` — it re-sends the existing content through the LLM structuring step
+
+**Bot fails to start on boot**
+- Usually caused by the bot starting before the network is ready
+- Add a `sleep 15` delay in the launchd plist (see Autostart section above)
 
 ---
 
