@@ -35,7 +35,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(
         "JacbotCoach online.\n\n"
         "Goals:\n"
-        "  /goals           — brain dump your goals\n"
+        "  /goals           — brain dump your goals (then /save, /confirm)\n"
         "  /goals_list      — view all goals (flat list)\n"
         "  /goals_cat       — view goals by category\n"
         "  /goals_reparse   — re-structure goals through AI (fixes raw text)\n"

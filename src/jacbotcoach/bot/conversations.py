@@ -29,7 +29,7 @@ async def goals_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     context.user_data["goal_buffer"] = []
     await update.message.reply_text(
         "Brain dump your goals. Send one per message or all at once.\n\n"
-        "When you're done: /done\n"
+        "When you're done: /save\n"
         "To cancel: /cancel"
     )
     return COLLECTING
@@ -43,7 +43,7 @@ async def goals_collect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     count = len(context.user_data["goal_buffer"])
     await update.message.reply_text(
         f"Got it. ({count} message{'s' if count > 1 else ''} captured)\n"
-        "Keep going or send /done to finish."
+        "Keep going or send /save to finish."
     )
     return COLLECTING
 
@@ -121,7 +121,7 @@ goals_conversation = ConversationHandler(
     entry_points=[CommandHandler("goals", goals_start)],
     states={
         COLLECTING: [
-            CommandHandler("done", goals_done),
+            CommandHandler("save", goals_done),
             MessageHandler(filters.TEXT & ~filters.COMMAND, goals_collect),
         ],
         CONFIRMING: [
