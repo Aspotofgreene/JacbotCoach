@@ -14,12 +14,22 @@ logger = logging.getLogger(__name__)
 
 def _is_allowed(update: Update) -> bool:
     settings = get_settings()
-    return update.effective_user is not None and (
-        update.effective_user.id == settings.telegram_allowed_user_id
-    )
+    user = update.effective_user
+    if user is None:
+        logger.warning("Update has no effective_user — ignoring")
+        return False
+    allowed = user.id == settings.telegram_allowed_user_id
+    if not allowed:
+        logger.warning(
+            "Rejected message from user_id=%s (allowed=%s)",
+            user.id,
+            settings.telegram_allowed_user_id,
+        )
+    return allowed
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info("start_command received from user_id=%s", update.effective_user and update.effective_user.id)
     if not _is_allowed(update):
         return
     await update.message.reply_text(
