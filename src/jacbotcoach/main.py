@@ -22,6 +22,8 @@ from jacbotcoach.bot.handlers import (
     milestones_command,
     nl_handler,
     promote_command,
+    research_command,
+    research_list_command,
     start_command,
     status_command,
     streak_done_command,
@@ -141,6 +143,10 @@ def main_sync() -> None:
     app.add_handler(CommandHandler("trigger", trigger_command))
     app.add_handler(CommandHandler("done", done_command))
     app.add_handler(CommandHandler("update", update_command))
+
+    # Research
+    app.add_handler(CommandHandler("research", research_command))
+    app.add_handler(CommandHandler("research_list", research_list_command))
 
     # Inline keyboard callbacks
     app.add_handler(CallbackQueryHandler(goal_callback, pattern=r"^goal:"))

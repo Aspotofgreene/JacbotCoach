@@ -1,5 +1,7 @@
 import logging
+import re
 from datetime import date, timedelta
+from pathlib import Path
 
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -11,6 +13,7 @@ from jacbotcoach.llm.router import LLMRouter
 from jacbotcoach.openclaw.client import OpenClawClient
 from jacbotcoach.storage.autonomous import AutonomousStore
 from jacbotcoach.storage.focus import FocusStore
+from jacbotcoach.storage.research_queue import ResearchQueue
 from jacbotcoach.storage.tasks_log import TasksLog
 
 logger = logging.getLogger(__name__)
@@ -72,6 +75,18 @@ async def run_morning_brief_job(application: Application) -> None:
             import re
             clean = re.sub(r"^\s*-\s*\[\d{4}-\d{2}-\d{2}\]\s*\[\w+\]\s*[✅📝🔄]?\s*", "", entry)
             lines.append(f"  • {clean.strip()}")
+
+    # Ready research reports (spawned topics whose output file now exists)
+    research_queue = ResearchQueue(settings.research_queue_path)
+    ready_reports = [
+        i for i in research_queue.get_all()
+        if i.get("status") == "spawned" and Path(i.get("output_path", "")).exists()
+    ]
+    if ready_reports:
+        lines.append(f"\n🔬 Research ready ({len(ready_reports)}):")
+        for item in ready_reports:
+            lines.append(f"  • {item['topic']}")
+            lines.append(f"    {item['output_path']}")
 
     target = _smart_task_count()
     lines.append(f"\nTasks will be generated at {settings.daily_task_hour:02d}:00 ({target} tasks planned for today).")
@@ -293,6 +308,79 @@ async def run_weekly_summary_job(application: Application) -> None:
     )
 
 
+async def run_research_job(application: Application) -> None:
+    """
+    Midnight job: for each pending topic in the research queue, spawn an
+    OpenClaw agent to research it and save a markdown summary to
+    research/<date>-<slug>.md.
+    """
+    settings = get_settings()
+    queue = ResearchQueue(settings.research_queue_path)
+    claw = OpenClawClient(settings.openclaw_url, settings.openclaw_token)
+
+    pending = queue.get_pending()
+    if not pending:
+        logger.info("Research job: no pending topics.")
+        return
+
+    logger.info("Research job: processing %d topic(s).", len(pending))
+    settings.research_dir.mkdir(parents=True, exist_ok=True)
+    today_str = date.today().isoformat()
+
+    spawned = []
+    failed = []
+
+    for item in pending:
+        topic = item["topic"]
+        slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:50]
+        output_path = settings.research_dir / f"{today_str}-{slug}.md"
+
+        prompt = (
+            f"Research the following topic thoroughly and produce a detailed markdown summary.\n\n"
+            f"Topic: {topic}\n\n"
+            f"Your research should cover:\n"
+            f"- Overview and key concepts\n"
+            f"- Current state and recent developments\n"
+            f"- Key players, tools, or resources\n"
+            f"- Practical implications or actionable insights\n"
+            f"- Further reading recommendations\n\n"
+            f"Save your complete research summary as a markdown file at: {output_path}\n"
+            f"The file should start with a # heading and be well-structured with clear sections.\n\n"
+            f"When done, append a ✅ line to memory/tasks-log.md in exactly this format:\n"
+            f"- [{today_str}] [DONE] ✅ Research complete: {topic}\n\n"
+            f"Never edit AUTONOMOUS.md directly."
+        )
+
+        try:
+            result = await claw.create_session(
+                prompt=prompt,
+                label=f"research-{slug}"[:80],
+            )
+            await queue.mark_spawned(topic, result.session_id, str(output_path))
+            spawned.append((topic, result.session_id, str(output_path)))
+            logger.info("Research spawned session %s for: %s", result.session_id, topic)
+        except Exception as e:
+            err_str = str(e)
+            logger.error("Research spawn failed for '%s': %s", topic, err_str)
+            await queue.mark_failed(topic, err_str)
+            failed.append((topic, err_str))
+
+    if spawned or failed:
+        lines = [f"🔬 Research job: {len(spawned)} topic(s) dispatched.\n"]
+        for topic, sid, out in spawned:
+            lines.append(f"  • {topic}")
+            lines.append(f"    Session: {sid}")
+            lines.append(f"    Output: {out}")
+        if failed:
+            lines.append(f"\n⚠️ {len(failed)} failed to spawn:")
+            for topic, err in failed:
+                lines.append(f"  • {topic}: {err[:100]}")
+        await application.bot.send_message(
+            chat_id=settings.telegram_allowed_user_id,
+            text="\n".join(lines),
+        )
+
+
 def build_scheduler(application: Application) -> AsyncIOScheduler:
     settings = get_settings()
     tz = pytz.timezone(settings.timezone)
@@ -347,9 +435,18 @@ def build_scheduler(application: Application) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    scheduler.add_job(
+        run_research_job,
+        trigger=CronTrigger(hour=0, minute=0, timezone=tz),
+        args=[application],
+        id="research",
+        name="Research Queue",
+        replace_existing=True,
+    )
+
     logger.info(
         "Scheduler: brief %02d:00, tasks %02d:%02d, reflection %02d:00, "
-        "stall Mon 07:00, summary Sun 09:00 (%s)",
+        "stall Mon 07:00, summary Sun 09:00, research 00:00 (%s)",
         settings.morning_brief_hour,
         settings.daily_task_hour,
         settings.daily_task_minute,
