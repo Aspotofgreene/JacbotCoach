@@ -60,7 +60,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Focus:\n"
         "  /focus           — see current focus goals\n"
         "  /focus <goals>   — set weekly focus goals\n"
-        "  /unfocus         — clear focus\n\n"
+        "  /unfocus         — clear focus\n"
+        "  /approve         — accept the bot's Sunday evening plan proposal\n\n"
         "Tasks:\n"
         "  /tasks           — view today's tasks\n"
         "  /trigger         — run task generation now\n"
@@ -803,6 +804,32 @@ async def promote_idea_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(
             f"Could not add to backlog. Use /status to check your goals file."
         )
+
+
+async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /approve — adopt the pending weekly plan proposal as this week's focus.
+    Sent by the bot Sunday evening; the user runs /approve to accept.
+    """
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    from jacbotcoach.storage.weekly_plan import WeeklyPlanStore
+    plan_store = WeeklyPlanStore(settings.weekly_plan_path)
+    proposal = plan_store.approve()
+    if not proposal:
+        await update.message.reply_text(
+            "No pending weekly plan to approve.\n"
+            "The bot sends a proposal Sunday evening around 6 PM,\n"
+            "or use /focus <text> to set your focus manually."
+        )
+        return
+    FocusStore(settings.autonomous_md_path.parent / "focus.md").set(proposal)
+    await update.message.reply_text(
+        f"✅ Weekly focus approved and set:\n\n{proposal}\n\n"
+        "Task generation will prioritize these goals all week.\n"
+        "Use /focus <text> to adjust, or /unfocus to clear."
+    )
 
 
 async def nl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

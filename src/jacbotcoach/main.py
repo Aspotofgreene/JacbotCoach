@@ -7,6 +7,7 @@ from jacbotcoach.bot.callbacks import goal_callback
 from jacbotcoach.bot.coach import coach_conversation
 from jacbotcoach.bot.conversations import goals_conversation
 from jacbotcoach.bot.handlers import (
+    approve_command,
     done_command,
     focus_command,
     goal_delete_command,
@@ -141,6 +142,7 @@ def main_sync() -> None:
     # Focus
     app.add_handler(CommandHandler("focus", focus_command))
     app.add_handler(CommandHandler("unfocus", unfocus_command))
+    app.add_handler(CommandHandler("approve", approve_command))
 
     # Tasks
     app.add_handler(CommandHandler("tasks", tasks_command))
