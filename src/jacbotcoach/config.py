@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     draft_queue_path: Path = Path("memory/draft-queue.json")
     drafts_dir: Path = Path("drafts")
     weekly_planning_hour: int = 18  # 6 PM Sunday
+    accountability_scoring_hour: int = 19  # 7 PM Sunday
+
+    # Accountability Scoring
+    accountability_scores_path: Path = Path("memory/accountability-scores.json")
 
 
 @lru_cache(maxsize=1)

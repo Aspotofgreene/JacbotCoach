@@ -31,6 +31,8 @@ from jacbotcoach.bot.handlers import (
     promote_idea_command,
     research_command,
     research_list_command,
+    score_command,
+    scores_command,
     status_command,
     streak_done_command,
     streaks_command,
@@ -164,6 +166,10 @@ def main_sync() -> None:
     # Drafts
     app.add_handler(CommandHandler("draft", draft_command))
     app.add_handler(CommandHandler("drafts", drafts_command))
+
+    # Accountability Scoring
+    app.add_handler(CommandHandler("score", score_command))
+    app.add_handler(CommandHandler("scores", scores_command))
 
     # Inline keyboard callbacks
     app.add_handler(CallbackQueryHandler(goal_callback, pattern=r"^goal:"))

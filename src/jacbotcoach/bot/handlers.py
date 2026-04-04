@@ -8,6 +8,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from jacbotcoach.config import get_settings
+from jacbotcoach.storage.accountability import AccountabilityStore
 from jacbotcoach.storage.autonomous import AutonomousStore
 from jacbotcoach.storage.focus import FocusStore
 from jacbotcoach.storage.milestones import MilestoneStore
@@ -81,6 +82,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Drafts:\n"
         "  /draft <topic>     — queue overnight first-draft writing (supports book goal)\n"
         "  /drafts            — view draft queue and completed drafts\n\n"
+        "Accountability:\n"
+        "  /score             — view this week's accountability score (1-10)\n"
+        "  /scores            — view score history across all tracked weeks\n\n"
         "Tip: You can also just type naturally, e.g. 'mark Learn Spanish as done'."
     )
 
@@ -914,6 +918,69 @@ async def drafts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             lines.append(f"  • {item['topic']}: {item.get('error', 'unknown')[:80]}")
 
     await update.message.reply_text("\n".join(lines).strip())
+
+
+async def score_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/score — show the most recent weekly accountability score with breakdown."""
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    store = AccountabilityStore(settings.accountability_scores_path)
+    entry = store.get_latest()
+    if not entry:
+        await update.message.reply_text(
+            "No accountability scores yet.\n"
+            "Scores are calculated automatically every Sunday at 7 PM.\n"
+            "You'll get your first score this Sunday!"
+        )
+        return
+
+    def _bar(score: int) -> str:
+        filled = round(score / 2)
+        return "█" * filled + "░" * (5 - filled)
+
+    overall = entry["overall"]
+    week_ending = entry["week_ending"]
+    text = (
+        f"📊 Accountability Score — week ending {week_ending}\n\n"
+        f"Consistency     {_bar(entry['consistency'])} {entry['consistency']}/10\n"
+        f"Focus Alignment {_bar(entry['focus_alignment'])} {entry['focus_alignment']}/10\n"
+        f"Momentum        {_bar(entry['momentum'])} {entry['momentum']}/10\n\n"
+        f"Overall: {overall}/10\n"
+        f"Tasks: {entry['done_count']} done / {entry['scheduled_count']} scheduled\n\n"
+        f"💬 {entry['insight'].strip()}"
+    )
+    await update.message.reply_text(text)
+
+
+async def scores_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/scores — show accountability score history (last 12 weeks)."""
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    store = AccountabilityStore(settings.accountability_scores_path)
+    history = store.get_history(weeks=12)
+    if not history:
+        await update.message.reply_text(
+            "No score history yet. Scores are recorded every Sunday evening."
+        )
+        return
+
+    lines = [f"📊 Accountability Score History ({len(history)} week{'s' if len(history) != 1 else ''})\n"]
+    for entry in history:
+        overall = entry["overall"]
+        bar_len = round(overall / 2)
+        bar = "█" * bar_len + "░" * (5 - bar_len)
+        lines.append(
+            f"{entry['week_ending']}  {bar} {overall}/10  "
+            f"(C:{entry['consistency']} F:{entry['focus_alignment']} M:{entry['momentum']})"
+        )
+
+    if len(history) >= 2:
+        avg = round(sum(e["overall"] for e in history) / len(history), 1)
+        lines.append(f"\n{len(history)}-week average: {avg}/10")
+
+    await update.message.reply_text("\n".join(lines))
 
 
 async def nl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
