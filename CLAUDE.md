@@ -144,6 +144,7 @@ Status values: Active | In Progress | Paused | Done
 - **Weekly Planning Session** — Sunday evening bot proposes next week's focus based on what worked; user approves or adjusts with /approve or /focus
 - **Decision Journal** — /decide <question> gives a recommendation grounded in user's actual goals
 - **Accountability Scoring** — weekly 1-10 rating across consistency, focus alignment, momentum; tracked over time in memory/scores.json
+- **Voice Message Support** — Telegram voice notes transcribed via Whisper (runs on desktop GPU); transcription treated as a brain dump or coaching message, great for capturing ideas on the go
 
 ## Git Workflow
 - Branch: `claude/build-jacbotcoach-bot-yutps`
