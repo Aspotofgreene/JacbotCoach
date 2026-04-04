@@ -9,6 +9,8 @@ from jacbotcoach.bot.conversations import goals_conversation
 from jacbotcoach.bot.handlers import (
     approve_command,
     done_command,
+    draft_command,
+    drafts_command,
     focus_command,
     goal_delete_command,
     goal_done_command,
@@ -158,6 +160,10 @@ def main_sync() -> None:
     # Research
     app.add_handler(CommandHandler("research", research_command))
     app.add_handler(CommandHandler("research_list", research_list_command))
+
+    # Drafts
+    app.add_handler(CommandHandler("draft", draft_command))
+    app.add_handler(CommandHandler("drafts", drafts_command))
 
     # Inline keyboard callbacks
     app.add_handler(CallbackQueryHandler(goal_callback, pattern=r"^goal:"))

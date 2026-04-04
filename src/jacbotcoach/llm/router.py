@@ -277,6 +277,35 @@ class LLMRouter:
         )
         return await client.generate(prompt, timeout=180.0)
 
+    async def generate_draft_prompt(self, topic: str, goals: str, output_path: str) -> str:
+        """
+        Heavy task: write a detailed drafting prompt for an OpenClaw session.
+        The agent will produce a first-draft markdown document on the topic.
+        Runs on desktop GPU (with Mac mini fallback).
+        """
+        client = await self._client_with_fallback(Complexity.HEAVY)
+        today = date.today().isoformat()
+        prompt = (
+            "Write a detailed, self-contained prompt for an autonomous AI agent "
+            "to produce a first-draft piece of writing on the following topic.\n\n"
+            f"Topic: {topic}\n\n"
+            f"User's goals and context:\n{goals}\n\n"
+            f"The agent has access to a Mac with shell, browser, and file system.\n\n"
+            "The drafting prompt must instruct the agent to:\n"
+            "1. Research the topic briefly (web search or existing files) for supporting details\n"
+            "2. Write a substantial first draft (800–2000 words) in clear, engaging prose\n"
+            "3. Structure it with a title, introduction, 3-5 body sections, and a conclusion\n"
+            "4. Tailor the tone and depth to support the user's goal (e.g. book writing, articles)\n"
+            f"5. Save the draft as a markdown file at exactly this path: {output_path}\n"
+            "6. The file must start with a # heading matching the topic\n"
+            f"7. End with this exact line: "
+            f"'When done, append a ✅ line to memory/tasks-log.md in exactly this format: "
+            f"- [{today}] [DONE] ✅ Draft complete: {topic}'\n"
+            "8. Never edit AUTONOMOUS.md directly.\n\n"
+            "Output only the drafting prompt text."
+        )
+        return await client.generate(prompt, timeout=240.0)
+
     async def generate_session_prompt(self, task: str, context: str) -> str:
         """
         Heavy task: write a detailed, self-contained prompt for an OpenClaw session.

@@ -20,12 +20,13 @@ JacbotCoach is made up of three layers working together:
 
 | Time | Event |
 |---|---|
-| 6:00 AM | Morning briefing — goal status snapshot, yesterday's completions, today's task count, ready research reports |
+| 6:00 AM | Morning briefing — goal status snapshot, yesterday's completions, today's task count, ready research reports and drafts |
 | 8:00 AM | Daily task generation — spawns OpenClaw agents (count varies by day) |
 | 8:00 PM | Evening reflection — completion summary + prompt to log manual wins |
 | Mon 7:00 AM | Stall detection — nudges goals with no activity in the past 7 days |
 | Sun 9:00 AM | Weekly summary — accomplishments, stalled goals, recommendations |
 | 12:00 AM | Research queue — spawns OpenClaw agents to research any queued topics |
+| 1:00 AM | Content drafting — spawns OpenClaw agents to write first drafts for any queued topics |
 
 ### Smart Scheduling
 
@@ -49,6 +50,8 @@ Task count adjusts automatically by day of week:
 | `memory/milestones.md` | Per-goal milestone checklists for tracking sub-steps. |
 | `memory/research-queue.json` | Research topic queue — tracks pending, in-progress, and completed research. |
 | `research/<date>-<topic>.md` | Markdown summaries produced by overnight research agents. |
+| `memory/draft-queue.json` | Content draft queue — tracks pending, in-progress, and completed drafts. |
+| `drafts/<date>-<topic>.md` | First-draft documents produced by overnight drafting agents. |
 
 ---
 
@@ -241,6 +244,17 @@ Queue topics for overnight autonomous research. OpenClaw agents research each to
 
 Research summaries are saved to `research/<date>-<topic>.md` and cover: overview, current developments, key tools/players, practical insights, and further reading.
 
+### Content Drafting
+
+Queue topics or chapters for overnight first-draft writing. OpenClaw agents write structured 800–2000 word drafts based on your goals. Results appear in the next morning's briefing.
+
+| Command | Description |
+|---|---|
+| `/draft <topic>` | Queue a topic for overnight drafting. Examples: `/draft Chapter 3: Deep Work` or `/draft Blog post on async Python` |
+| `/drafts` | Show the draft queue — pending, in-progress, and ready drafts with file paths. |
+
+Drafts are saved to `drafts/<date>-<topic>.md` with a title heading, introduction, 3–5 body sections, and conclusion. Tone and depth are shaped by your goals context.
+
 ---
 
 ## Troubleshooting
@@ -287,3 +301,5 @@ All settings are in `.env`. Copy `.env.example` to get started.
 | `MILESTONES_PATH` | `memory/milestones.md` | Path to milestone data |
 | `RESEARCH_QUEUE_PATH` | `memory/research-queue.json` | Path to research queue |
 | `RESEARCH_DIR` | `research` | Directory where research summaries are saved |
+| `DRAFT_QUEUE_PATH` | `memory/draft-queue.json` | Path to draft queue |
+| `DRAFTS_DIR` | `drafts` | Directory where draft documents are saved |

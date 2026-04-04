@@ -2,6 +2,7 @@ import json
 import logging
 import re
 from datetime import date, timedelta
+from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -77,6 +78,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Research:\n"
         "  /research <topic>  — queue a topic for overnight OpenClaw research\n"
         "  /research_list     — view queue and ready reports\n\n"
+        "Drafts:\n"
+        "  /draft <topic>     — queue overnight first-draft writing (supports book goal)\n"
+        "  /drafts            — view draft queue and completed drafts\n\n"
         "Tip: You can also just type naturally, e.g. 'mark Learn Spanish as done'."
     )
 
@@ -830,6 +834,86 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "Task generation will prioritize these goals all week.\n"
         "Use /focus <text> to adjust, or /unfocus to clear."
     )
+
+
+async def draft_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/draft <topic or chapter> — queue an overnight first-draft writing session."""
+    if not _is_allowed(update):
+        return
+    topic = " ".join(context.args) if context.args else ""
+    if not topic:
+        await update.message.reply_text(
+            "Usage: /draft <topic or chapter>\n"
+            "Examples:\n"
+            "  /draft Chapter 3: The Case for Deep Work\n"
+            "  /draft Introduction to my productivity book\n"
+            "  /draft Blog post on async Python patterns\n\n"
+            "Drafts are written overnight by an OpenClaw agent.\n"
+            "Results are saved to drafts/<date>-<topic>.md and listed in your morning briefing."
+        )
+        return
+    settings = get_settings()
+    from jacbotcoach.storage.draft_queue import DraftQueue
+    queue = DraftQueue(settings.draft_queue_path)
+    count = await queue.enqueue(topic)
+    await update.message.reply_text(
+        f"✍️ Draft queued: {topic}\n\n"
+        f"Queue depth: {count} draft(s). "
+        "The draft will be written overnight and listed in your morning briefing."
+    )
+
+
+async def drafts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/drafts — show the draft queue and any completed drafts."""
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    from jacbotcoach.storage.draft_queue import DraftQueue
+    queue = DraftQueue(settings.draft_queue_path)
+    all_items = queue.get_all()
+
+    if not all_items:
+        await update.message.reply_text(
+            "No drafts queued. Use /draft <topic> to queue one."
+        )
+        return
+
+    pending = [i for i in all_items if i["status"] == "pending"]
+    spawned = [i for i in all_items if i["status"] == "spawned"]
+    failed = [i for i in all_items if i["status"] == "failed"]
+    ready = [
+        i for i in spawned
+        if Path(i.get("output_path", "NONE")).exists()
+    ]
+
+    lines = ["Draft queue:\n"]
+
+    if ready:
+        lines.append(f"✅ Ready drafts ({len(ready)}):")
+        for item in ready:
+            lines.append(f"  • {item['topic']}")
+            lines.append(f"    {item['output_path']}")
+        lines.append("")
+
+    if pending:
+        lines.append(f"⏳ Pending ({len(pending)}):")
+        for item in pending:
+            lines.append(f"  • {item['topic']} (queued {item['queued_at']})")
+        lines.append("")
+
+    in_progress = [i for i in spawned if i not in ready]
+    if in_progress:
+        lines.append(f"🔄 In progress ({len(in_progress)}):")
+        for item in in_progress:
+            lines.append(f"  • {item['topic']}")
+        lines.append("")
+
+    if failed:
+        lines.append(f"❌ Failed ({len(failed)}):")
+        for item in failed:
+            lines.append(f"  • {item['topic']}: {item.get('error', 'unknown')[:80]}")
+
+    await update.message.reply_text("\n".join(lines).strip())
 
 
 async def nl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
