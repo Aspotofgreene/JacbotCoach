@@ -15,6 +15,7 @@ from jacbotcoach.storage.autonomous import AutonomousStore
 from jacbotcoach.storage.focus import FocusStore
 from jacbotcoach.storage.research_queue import ResearchQueue
 from jacbotcoach.storage.tasks_log import TasksLog
+from jacbotcoach.storage.weekly_plan import WeeklyPlanStore
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +309,61 @@ async def run_weekly_summary_job(application: Application) -> None:
     )
 
 
+async def run_weekly_planning_job(application: Application) -> None:
+    """
+    Sunday 6 PM: propose next week's focus based on this week's activity.
+    Sends a proposal; user replies /approve to adopt it or /focus <text> to override.
+    """
+    settings = get_settings()
+    store = AutonomousStore(settings.autonomous_md_path)
+    focus_store = FocusStore(settings.autonomous_md_path.parent / "focus.md")
+    log = TasksLog(settings.tasks_log_path)
+    plan_store = WeeklyPlanStore(settings.weekly_plan_path)
+    router = LLMRouter()
+
+    if store.is_empty():
+        logger.info("Weekly planning: no goals on file — skipping.")
+        return
+
+    today = date.today()
+    week_lines = []
+    for line in log.read_all().splitlines():
+        for i in range(7):
+            d = (today - timedelta(days=i)).isoformat()
+            if d in line:
+                week_lines.append(line.strip())
+                break
+
+    task_log_text = "\n".join(week_lines) if week_lines else "No tasks logged this week."
+
+    logger.info("Generating weekly plan proposal...")
+    try:
+        proposal = await router.propose_weekly_plan(
+            goals=store.read(),
+            task_log=task_log_text,
+            focus=focus_store.read(),
+        )
+    except Exception as e:
+        logger.exception("Weekly plan proposal failed")
+        await application.bot.send_message(
+            chat_id=settings.telegram_allowed_user_id,
+            text=f"Weekly planning failed: {e}",
+        )
+        return
+
+    plan_store.set_proposal(proposal)
+
+    await application.bot.send_message(
+        chat_id=settings.telegram_allowed_user_id,
+        text=(
+            "📅 Weekly Planning — proposed focus for next week:\n\n"
+            f"{proposal}\n\n"
+            "Reply /approve to set this as your weekly focus, "
+            "or /focus <text> to write your own."
+        ),
+    )
+
+
 async def run_research_job(application: Application) -> None:
     """
     Midnight job: for each pending topic in the research queue, spawn an
@@ -444,13 +500,25 @@ def build_scheduler(application: Application) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    scheduler.add_job(
+        run_weekly_planning_job,
+        trigger=CronTrigger(
+            day_of_week="sun", hour=settings.weekly_planning_hour, minute=0, timezone=tz
+        ),
+        args=[application],
+        id="weekly_planning",
+        name="Weekly Planning Session",
+        replace_existing=True,
+    )
+
     logger.info(
         "Scheduler: brief %02d:00, tasks %02d:%02d, reflection %02d:00, "
-        "stall Mon 07:00, summary Sun 09:00, research 00:00 (%s)",
+        "stall Mon 07:00, summary Sun 09:00, planning Sun %02d:00, research 00:00 (%s)",
         settings.morning_brief_hour,
         settings.daily_task_hour,
         settings.daily_task_minute,
         settings.evening_reflection_hour,
+        settings.weekly_planning_hour,
         settings.timezone,
     )
     return scheduler

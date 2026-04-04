@@ -254,6 +254,29 @@ class LLMRouter:
             pass
         return None
 
+    async def propose_weekly_plan(self, goals: str, task_log: str, focus: str = "") -> str:
+        """
+        Heavy task: propose a concrete focus for next week based on this week's activity.
+        Runs Sunday evening on desktop GPU (with Mac mini fallback).
+        """
+        client = await self._client_with_fallback(Complexity.HEAVY)
+        week_of = date.today().strftime("%B %d, %Y")
+        focus_section = f"\nCurrent focus goals:\n{focus}\n" if focus else ""
+        prompt = (
+            f"Week ending {week_of}. You are a personal coach planning next week.\n\n"
+            f"Goals on file:\n{goals}\n"
+            f"{focus_section}"
+            f"Task log from this week:\n{task_log}\n\n"
+            "Based on what was accomplished and what is stalling, propose a clear, "
+            "specific focus for next week. The focus must:\n"
+            "1. Name 2-3 concrete goals or areas to prioritize\n"
+            "2. Be grounded in the active goals above (not generic advice)\n"
+            "3. Open with one sentence about what worked well this week\n\n"
+            "Keep the total output under 80 words. "
+            "Output plain text, no markdown headers."
+        )
+        return await client.generate(prompt, timeout=180.0)
+
     async def generate_session_prompt(self, task: str, context: str) -> str:
         """
         Heavy task: write a detailed, self-contained prompt for an OpenClaw session.

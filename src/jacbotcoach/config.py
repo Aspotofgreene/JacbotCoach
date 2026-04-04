@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     research_queue_path: Path = Path("memory/research-queue.json")
     research_dir: Path = Path("research")
     ideas_path: Path = Path("memory/ideas.md")
+    weekly_plan_path: Path = Path("memory/weekly_plan.json")
+    weekly_planning_hour: int = 18  # 6 PM Sunday
 
 
 @lru_cache(maxsize=1)
