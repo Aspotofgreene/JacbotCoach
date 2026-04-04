@@ -13,6 +13,7 @@ from jacbotcoach.llm.router import LLMRouter
 from jacbotcoach.openclaw.client import OpenClawClient
 from jacbotcoach.storage.autonomous import AutonomousStore
 from jacbotcoach.storage.focus import FocusStore
+from jacbotcoach.storage.draft_queue import DraftQueue
 from jacbotcoach.storage.research_queue import ResearchQueue
 from jacbotcoach.storage.tasks_log import TasksLog
 from jacbotcoach.storage.weekly_plan import WeeklyPlanStore
@@ -86,6 +87,18 @@ async def run_morning_brief_job(application: Application) -> None:
     if ready_reports:
         lines.append(f"\n🔬 Research ready ({len(ready_reports)}):")
         for item in ready_reports:
+            lines.append(f"  • {item['topic']}")
+            lines.append(f"    {item['output_path']}")
+
+    # Ready drafts (spawned drafts whose output file now exists)
+    draft_queue = DraftQueue(settings.draft_queue_path)
+    ready_drafts = [
+        i for i in draft_queue.get_all()
+        if i.get("status") == "spawned" and Path(i.get("output_path", "")).exists()
+    ]
+    if ready_drafts:
+        lines.append(f"\n✍️ Drafts ready ({len(ready_drafts)}):")
+        for item in ready_drafts:
             lines.append(f"  • {item['topic']}")
             lines.append(f"    {item['output_path']}")
 
@@ -437,6 +450,71 @@ async def run_research_job(application: Application) -> None:
         )
 
 
+async def run_content_drafting_job(application: Application) -> None:
+    """
+    1 AM job: for each pending topic in the draft queue, spawn an
+    OpenClaw agent to write a first-draft document and save it to
+    drafts/<date>-<slug>.md.
+    """
+    settings = get_settings()
+    queue = DraftQueue(settings.draft_queue_path)
+    store = AutonomousStore(settings.autonomous_md_path)
+    claw = OpenClawClient(settings.openclaw_url, settings.openclaw_token)
+    router = LLMRouter()
+
+    pending = queue.get_pending()
+    if not pending:
+        logger.info("Content drafting job: no pending drafts.")
+        return
+
+    logger.info("Content drafting job: processing %d draft(s).", len(pending))
+    settings.drafts_dir.mkdir(parents=True, exist_ok=True)
+    today_str = date.today().isoformat()
+    goals = store.read() if not store.is_empty() else ""
+
+    spawned = []
+    failed = []
+
+    for item in pending:
+        topic = item["topic"]
+        slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:50]
+        output_path = settings.drafts_dir / f"{today_str}-{slug}.md"
+
+        try:
+            draft_prompt = await router.generate_draft_prompt(
+                topic=topic,
+                goals=goals,
+                output_path=str(output_path),
+            )
+            result = await claw.create_session(
+                prompt=draft_prompt,
+                label=f"draft-{slug}"[:80],
+            )
+            await queue.mark_spawned(topic, result.session_id, str(output_path))
+            spawned.append((topic, result.session_id, str(output_path)))
+            logger.info("Draft spawned session %s for: %s", result.session_id, topic)
+        except Exception as e:
+            err_str = str(e)
+            logger.error("Draft spawn failed for '%s': %s", topic, err_str)
+            await queue.mark_failed(topic, err_str)
+            failed.append((topic, err_str))
+
+    if spawned or failed:
+        lines = [f"✍️ Content drafting job: {len(spawned)} draft(s) dispatched.\n"]
+        for topic, sid, out in spawned:
+            lines.append(f"  • {topic}")
+            lines.append(f"    Session: {sid}")
+            lines.append(f"    Output: {out}")
+        if failed:
+            lines.append(f"\n⚠️ {len(failed)} failed to spawn:")
+            for topic, err in failed:
+                lines.append(f"  • {topic}: {err[:100]}")
+        await application.bot.send_message(
+            chat_id=settings.telegram_allowed_user_id,
+            text="\n".join(lines),
+        )
+
+
 def build_scheduler(application: Application) -> AsyncIOScheduler:
     settings = get_settings()
     tz = pytz.timezone(settings.timezone)
@@ -501,6 +579,15 @@ def build_scheduler(application: Application) -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
+        run_content_drafting_job,
+        trigger=CronTrigger(hour=1, minute=0, timezone=tz),
+        args=[application],
+        id="content_drafting",
+        name="Content Drafting",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
         run_weekly_planning_job,
         trigger=CronTrigger(
             day_of_week="sun", hour=settings.weekly_planning_hour, minute=0, timezone=tz
@@ -513,7 +600,8 @@ def build_scheduler(application: Application) -> AsyncIOScheduler:
 
     logger.info(
         "Scheduler: brief %02d:00, tasks %02d:%02d, reflection %02d:00, "
-        "stall Mon 07:00, summary Sun 09:00, planning Sun %02d:00, research 00:00 (%s)",
+        "stall Mon 07:00, summary Sun 09:00, planning Sun %02d:00, "
+        "research 00:00, drafting 01:00 (%s)",
         settings.morning_brief_hour,
         settings.daily_task_hour,
         settings.daily_task_minute,

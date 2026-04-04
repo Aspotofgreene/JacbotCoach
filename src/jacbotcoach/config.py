@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     research_dir: Path = Path("research")
     ideas_path: Path = Path("memory/ideas.md")
     weekly_plan_path: Path = Path("memory/weekly_plan.json")
+    draft_queue_path: Path = Path("memory/draft-queue.json")
+    drafts_dir: Path = Path("drafts")
     weekly_planning_hour: int = 18  # 6 PM Sunday
 
 
