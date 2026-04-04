@@ -69,6 +69,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Coaching:\n"
         "  /coach           — start a coaching conversation\n"
         "  /endcoach        — end coaching session\n\n"
+        "Ideas:\n"
+        "  /idea <text>       — capture a quick idea instantly\n"
+        "  /ideas             — list all captured ideas\n"
+        "  /promote_idea <text> — move an idea to the Open Backlog\n\n"
         "Research:\n"
         "  /research <topic>  — queue a topic for overnight OpenClaw research\n"
         "  /research_list     — view queue and ready reports\n\n"
@@ -709,6 +713,96 @@ async def research_list_command(update: Update, context: ContextTypes.DEFAULT_TY
             lines.append(f"  • {item['topic']}: {item.get('error', 'unknown')[:80]}")
 
     await update.message.reply_text("\n".join(lines).strip())
+
+
+async def idea_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/idea <text> — capture a quick idea with no LLM processing."""
+    if not _is_allowed(update):
+        return
+    text = " ".join(context.args) if context.args else ""
+    if not text:
+        await update.message.reply_text(
+            "Usage: /idea <your idea>\n"
+            "Example: /idea Build a habit tracker that syncs with Apple Health\n\n"
+            "Ideas are saved instantly to memory/ideas.md.\n"
+            "Use /ideas to review them or /promote_idea to move one to your backlog."
+        )
+        return
+    settings = get_settings()
+    from jacbotcoach.storage.ideas import IdeaStore
+    store = IdeaStore(settings.ideas_path)
+    count = store.append(text)
+    await update.message.reply_text(
+        f"💡 Idea captured!\n{text}\n\n"
+        f"You have {count} idea{'s' if count != 1 else ''} saved."
+    )
+
+
+async def ideas_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/ideas — list all captured ideas."""
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    from jacbotcoach.storage.ideas import IdeaStore
+    store = IdeaStore(settings.ideas_path)
+    ideas = store.read_all()
+    if not ideas:
+        await update.message.reply_text(
+            "No ideas saved yet. Use /idea <text> to capture one."
+        )
+        return
+    lines = [f"💡 Your ideas ({len(ideas)} total):\n"]
+    for i, idea in enumerate(ideas, 1):
+        lines.append(f"{i}. {idea[2:]}")  # strip leading "- "
+    await update.message.reply_text("\n".join(lines)[:4000])
+
+
+async def promote_idea_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/promote_idea <text> — move a matching idea to the Open Backlog."""
+    if not _is_allowed(update):
+        return
+    text = " ".join(context.args) if context.args else ""
+    if not text:
+        await update.message.reply_text(
+            "Usage: /promote_idea <idea text or keyword>\n"
+            "Example: /promote_idea habit tracker\n\n"
+            "This moves the matching idea into your Open Backlog in AUTONOMOUS.md."
+        )
+        return
+    settings = get_settings()
+    from jacbotcoach.storage.ideas import IdeaStore
+    idea_store = IdeaStore(settings.ideas_path)
+
+    ideas = idea_store.read_all()
+    needle = text.strip().lower()
+    match = next((line for line in ideas if needle in line.lower()), None)
+
+    if not match:
+        await update.message.reply_text(
+            f"No idea matching '{text}' found.\n"
+            "Use /ideas to see the full list."
+        )
+        return
+
+    plain_text = idea_store.extract_text(match)
+
+    auto_store = AutonomousStore(settings.autonomous_md_path)
+    if auto_store.is_empty():
+        await update.message.reply_text(
+            "No goals file found. Use /goals to set up your goals first."
+        )
+        return
+
+    if auto_store.add_to_backlog(plain_text):
+        idea_store.remove(text)
+        await update.message.reply_text(
+            f"✅ Moved to Open Backlog:\n{plain_text}\n\n"
+            "Use /promote to classify it into an active goal."
+        )
+    else:
+        await update.message.reply_text(
+            f"Could not add to backlog. Use /status to check your goals file."
+        )
 
 
 async def nl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -18,11 +18,14 @@ from jacbotcoach.bot.handlers import (
     goals_reparse_command,
     help_command,
     history_command,
+    idea_command,
+    ideas_command,
     milestone_command,
     milestone_done_command,
     milestones_command,
     nl_handler,
     promote_command,
+    promote_idea_command,
     research_command,
     research_list_command,
     status_command,
@@ -144,6 +147,11 @@ def main_sync() -> None:
     app.add_handler(CommandHandler("trigger", trigger_command))
     app.add_handler(CommandHandler("done", done_command))
     app.add_handler(CommandHandler("update", update_command))
+
+    # Ideas
+    app.add_handler(CommandHandler("idea", idea_command))
+    app.add_handler(CommandHandler("ideas", ideas_command))
+    app.add_handler(CommandHandler("promote_idea", promote_idea_command))
 
     # Research
     app.add_handler(CommandHandler("research", research_command))

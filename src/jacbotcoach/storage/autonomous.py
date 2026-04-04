@@ -149,6 +149,28 @@ class AutonomousStore:
         self.write(new_content)
         return True
 
+    def add_to_backlog(self, text: str) -> bool:
+        """
+        Append a raw bullet to ## Open Backlog.
+        Returns True on success, False if the section is not found.
+        """
+        content = self.read()
+        if "## Open Backlog" not in content:
+            return False
+        new_item = f"- {text.strip()}"
+        # Insert after the "## Open Backlog" header line
+        lines = content.splitlines()
+        insert_at = -1
+        for i, line in enumerate(lines):
+            if line.strip() == "## Open Backlog":
+                insert_at = i + 1
+                break
+        if insert_at < 0:
+            return False
+        lines.insert(insert_at, new_item)
+        self.write("\n".join(lines))
+        return True
+
     def update_goal_status(self, goal_title: str, status: str) -> bool:
         """
         Update the Status column of a goal row.
