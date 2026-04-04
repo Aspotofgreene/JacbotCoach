@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     milestones_path: Path = Path("memory/milestones.md")
     research_queue_path: Path = Path("memory/research-queue.json")
     research_dir: Path = Path("research")
+    ideas_path: Path = Path("memory/ideas.md")
 
 
 @lru_cache(maxsize=1)
