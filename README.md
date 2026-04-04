@@ -20,11 +20,12 @@ JacbotCoach is made up of three layers working together:
 
 | Time | Event |
 |---|---|
-| 6:00 AM | Morning briefing — goal status snapshot, yesterday's completions, today's task count |
+| 6:00 AM | Morning briefing — goal status snapshot, yesterday's completions, today's task count, ready research reports |
 | 8:00 AM | Daily task generation — spawns OpenClaw agents (count varies by day) |
 | 8:00 PM | Evening reflection — completion summary + prompt to log manual wins |
 | Mon 7:00 AM | Stall detection — nudges goals with no activity in the past 7 days |
 | Sun 9:00 AM | Weekly summary — accomplishments, stalled goals, recommendations |
+| 12:00 AM | Research queue — spawns OpenClaw agents to research any queued topics |
 
 ### Smart Scheduling
 
@@ -46,6 +47,8 @@ Task count adjusts automatically by day of week:
 | `focus.md` | Your current weekly focus goals. Influences what tasks get generated each morning. |
 | `memory/streaks.json` | Habit streak tracker — current streak, personal best, last logged date. |
 | `memory/milestones.md` | Per-goal milestone checklists for tracking sub-steps. |
+| `memory/research-queue.json` | Research topic queue — tracks pending, in-progress, and completed research. |
+| `research/<date>-<topic>.md` | Markdown summaries produced by overnight research agents. |
 
 ---
 
@@ -227,6 +230,17 @@ Streaks are also updated automatically when OpenClaw completes a task related to
 
 During a coaching session, any plain text message goes to the coach. History is kept for up to 10 exchanges.
 
+### Research Queue
+
+Queue topics for overnight autonomous research. OpenClaw agents research each topic and save structured markdown summaries. Results appear in the next morning's briefing.
+
+| Command | Description |
+|---|---|
+| `/research <topic>` | Queue a topic for overnight research. Example: `/research Agentic AI frameworks in 2025` |
+| `/research_list` | Show the research queue — pending, in-progress, and ready reports with file paths. |
+
+Research summaries are saved to `research/<date>-<topic>.md` and cover: overview, current developments, key tools/players, practical insights, and further reading.
+
 ---
 
 ## Troubleshooting
@@ -271,3 +285,5 @@ All settings are in `.env`. Copy `.env.example` to get started.
 | `TASKS_LOG_PATH` | `memory/tasks-log.md` | Path to task log |
 | `STREAKS_PATH` | `memory/streaks.json` | Path to streak data |
 | `MILESTONES_PATH` | `memory/milestones.md` | Path to milestone data |
+| `RESEARCH_QUEUE_PATH` | `memory/research-queue.json` | Path to research queue |
+| `RESEARCH_DIR` | `research` | Directory where research summaries are saved |

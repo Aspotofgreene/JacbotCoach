@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     tasks_log_path: Path = Path("memory/tasks-log.md")
     streaks_path: Path = Path("memory/streaks.json")
     milestones_path: Path = Path("memory/milestones.md")
+    research_queue_path: Path = Path("memory/research-queue.json")
+    research_dir: Path = Path("research")
 
 
 @lru_cache(maxsize=1)

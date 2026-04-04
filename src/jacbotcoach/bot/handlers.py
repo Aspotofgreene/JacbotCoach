@@ -32,8 +32,8 @@ def _is_allowed(update: Update) -> bool:
     return allowed
 
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.info("start_command received from user_id=%s", update.effective_user and update.effective_user.id)
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info("help_command received from user_id=%s", update.effective_user and update.effective_user.id)
     if not _is_allowed(update):
         return
     await update.message.reply_text(
@@ -69,6 +69,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "Coaching:\n"
         "  /coach           — start a coaching conversation\n"
         "  /endcoach        — end coaching session\n\n"
+        "Research:\n"
+        "  /research <topic>  — queue a topic for overnight OpenClaw research\n"
+        "  /research_list     — view queue and ready reports\n\n"
         "Tip: You can also just type naturally, e.g. 'mark Learn Spanish as done'."
     )
 
@@ -632,6 +635,80 @@ async def milestones_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if pct is not None:
         header += f" ({pct}% complete)"
     await update.message.reply_text(f"{header}\n\n{summary}")
+
+
+async def research_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/research <topic> — queue a topic for overnight OpenClaw research."""
+    if not _is_allowed(update):
+        return
+    topic = " ".join(context.args) if context.args else ""
+    if not topic:
+        await update.message.reply_text(
+            "Usage: /research <topic>\n"
+            "Example: /research Agentic AI frameworks in 2025\n\n"
+            "Topics are researched overnight by an OpenClaw agent.\n"
+            "Results are saved to research/<date>-<topic>.md and listed in your morning briefing."
+        )
+        return
+    settings = get_settings()
+    from jacbotcoach.storage.research_queue import ResearchQueue
+    queue = ResearchQueue(settings.research_queue_path)
+    count = await queue.enqueue(topic)
+    await update.message.reply_text(
+        f"🔬 Research queued: {topic}\n\n"
+        f"Queue depth: {count} topic(s). Results will appear in your morning briefing."
+    )
+
+
+async def research_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/research_list — show the research queue and any ready reports."""
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    from jacbotcoach.storage.research_queue import ResearchQueue
+    queue = ResearchQueue(settings.research_queue_path)
+    all_items = queue.get_all()
+
+    if not all_items:
+        await update.message.reply_text(
+            "No research queued. Use /research <topic> to queue a topic."
+        )
+        return
+
+    pending = [i for i in all_items if i["status"] == "pending"]
+    spawned = [i for i in all_items if i["status"] == "spawned"]
+    failed = [i for i in all_items if i["status"] == "failed"]
+    ready = [i for i in spawned if (settings.research_dir / i.get("output_path", "NONE")).exists()
+             or Path(i.get("output_path", "NONE")).exists()]
+
+    lines = ["Research queue:\n"]
+
+    if ready:
+        lines.append(f"✅ Ready reports ({len(ready)}):")
+        for item in ready:
+            lines.append(f"  • {item['topic']}")
+            lines.append(f"    {item['output_path']}")
+        lines.append("")
+
+    if pending:
+        lines.append(f"⏳ Pending ({len(pending)}):")
+        for item in pending:
+            lines.append(f"  • {item['topic']} (queued {item['queued_at']})")
+        lines.append("")
+
+    in_progress = [i for i in spawned if i not in ready]
+    if in_progress:
+        lines.append(f"🔄 In progress ({len(in_progress)}):")
+        for item in in_progress:
+            lines.append(f"  • {item['topic']}")
+        lines.append("")
+
+    if failed:
+        lines.append(f"❌ Failed ({len(failed)}):")
+        for item in failed:
+            lines.append(f"  • {item['topic']}: {item.get('error', 'unknown')[:80]}")
+
+    await update.message.reply_text("\n".join(lines).strip())
 
 
 async def nl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
