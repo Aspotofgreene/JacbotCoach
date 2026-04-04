@@ -16,6 +16,7 @@ from jacbotcoach.storage.focus import FocusStore
 from jacbotcoach.storage.draft_queue import DraftQueue
 from jacbotcoach.storage.research_queue import ResearchQueue
 from jacbotcoach.storage.tasks_log import TasksLog
+from jacbotcoach.storage.accountability import AccountabilityStore
 from jacbotcoach.storage.weekly_plan import WeeklyPlanStore
 
 logger = logging.getLogger(__name__)
@@ -515,6 +516,147 @@ async def run_content_drafting_job(application: Application) -> None:
         )
 
 
+async def run_accountability_scoring_job(application: Application) -> None:
+    """
+    Sunday 7 PM: compute a weekly 1-10 score across consistency, focus alignment,
+    and momentum; save to memory/accountability-scores.json and send a Telegram summary.
+    """
+    settings = get_settings()
+    store = AutonomousStore(settings.autonomous_md_path)
+    focus_store = FocusStore(settings.autonomous_md_path.parent / "focus.md")
+    log = TasksLog(settings.tasks_log_path)
+    scores_store = AccountabilityStore(settings.accountability_scores_path)
+    router = LLMRouter()
+
+    if store.is_empty():
+        logger.info("Accountability scoring: no goals on file — skipping.")
+        return
+
+    today = date.today()
+    week_ending = today.isoformat()
+
+    # Collect this week's log lines (past 7 days)
+    done_lines: list[str] = []
+    scheduled_count = 0
+    for line in log.read_all().splitlines():
+        line = line.strip()
+        for i in range(7):
+            d = (today - timedelta(days=i)).isoformat()
+            if d in line:
+                if "[DONE]" in line:
+                    done_lines.append(line)
+                elif "[SCHEDULED]" in line:
+                    scheduled_count += 1
+                break
+
+    done_count = len(done_lines)
+
+    # --- Consistency (1-10): tasks completed vs tasks scheduled ---
+    if scheduled_count == 0:
+        # Nothing was even scheduled — score reflects that
+        consistency = 5 if done_count > 0 else 3
+    else:
+        ratio = done_count / scheduled_count
+        consistency = max(1, min(10, round(ratio * 10)))
+
+    # --- Focus Alignment (1-10): do completed tasks mention focus keywords? ---
+    focus_text = focus_store.read()
+    if not focus_text:
+        focus_alignment = 5  # neutral when no focus is set
+    elif done_count == 0:
+        focus_alignment = 1
+    else:
+        focus_words = set(
+            w.lower() for w in re.split(r"\W+", focus_text) if len(w) > 3
+        )
+        aligned = sum(
+            1 for line in done_lines
+            if any(w in line.lower() for w in focus_words)
+        )
+        ratio = aligned / done_count
+        focus_alignment = max(1, min(10, round(ratio * 10)))
+        # Partial credit floor: if you did tasks at all, give at least 3
+        if done_count > 0 and focus_alignment < 3:
+            focus_alignment = 3
+
+    # --- Momentum (1-10): this week vs last week's done_count ---
+    prev_done = scores_store.get_previous_done_count(week_ending)
+    if prev_done == 0 and done_count == 0:
+        momentum = 5
+    elif prev_done == 0:
+        momentum = 7  # first week with data — neutral-positive
+    else:
+        ratio = done_count / prev_done
+        # >1.0 means improvement, <1.0 means drop
+        if ratio >= 1.5:
+            momentum = 10
+        elif ratio >= 1.2:
+            momentum = 9
+        elif ratio >= 1.0:
+            momentum = 7
+        elif ratio >= 0.8:
+            momentum = 5
+        elif ratio >= 0.5:
+            momentum = 3
+        else:
+            momentum = 1
+
+    logger.info(
+        "Accountability scoring: week=%s done=%d scheduled=%d "
+        "consistency=%d focus=%d momentum=%d",
+        week_ending, done_count, scheduled_count,
+        consistency, focus_alignment, momentum,
+    )
+
+    # --- LLM insight ---
+    goals = store.read()
+    try:
+        insight = await router.accountability_insight(
+            week_ending=week_ending,
+            consistency=consistency,
+            focus_alignment=focus_alignment,
+            momentum=momentum,
+            done_count=done_count,
+            scheduled_count=scheduled_count,
+            focus=focus_text,
+            goals=goals,
+        )
+    except Exception:
+        logger.exception("Accountability insight LLM call failed — using fallback text")
+        insight = "LLM insight unavailable this week."
+
+    # --- Persist ---
+    scores_store.record(
+        week_ending=week_ending,
+        consistency=consistency,
+        focus_alignment=focus_alignment,
+        momentum=momentum,
+        done_count=done_count,
+        scheduled_count=scheduled_count,
+        insight=insight,
+    )
+
+    overall = round((consistency + focus_alignment + momentum) / 3, 1)
+
+    def _bar(score: int) -> str:
+        filled = round(score / 2)  # 5-char bar
+        return "█" * filled + "░" * (5 - filled)
+
+    text = (
+        f"📊 Weekly Accountability Score — {today.strftime('%B %d, %Y')}\n\n"
+        f"Consistency     {_bar(consistency)} {consistency}/10\n"
+        f"Focus Alignment {_bar(focus_alignment)} {focus_alignment}/10\n"
+        f"Momentum        {_bar(momentum)} {momentum}/10\n\n"
+        f"Overall: {overall}/10\n\n"
+        f"💬 {insight.strip()}"
+    )
+
+    await application.bot.send_message(
+        chat_id=settings.telegram_allowed_user_id,
+        text=text,
+    )
+
+
 def build_scheduler(application: Application) -> AsyncIOScheduler:
     settings = get_settings()
     tz = pytz.timezone(settings.timezone)
@@ -598,15 +740,27 @@ def build_scheduler(application: Application) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    scheduler.add_job(
+        run_accountability_scoring_job,
+        trigger=CronTrigger(
+            day_of_week="sun", hour=settings.accountability_scoring_hour, minute=0, timezone=tz
+        ),
+        args=[application],
+        id="accountability_scoring",
+        name="Accountability Scoring",
+        replace_existing=True,
+    )
+
     logger.info(
         "Scheduler: brief %02d:00, tasks %02d:%02d, reflection %02d:00, "
         "stall Mon 07:00, summary Sun 09:00, planning Sun %02d:00, "
-        "research 00:00, drafting 01:00 (%s)",
+        "accountability Sun %02d:00, research 00:00, drafting 01:00 (%s)",
         settings.morning_brief_hour,
         settings.daily_task_hour,
         settings.daily_task_minute,
         settings.evening_reflection_hour,
         settings.weekly_planning_hour,
+        settings.accountability_scoring_hour,
         settings.timezone,
     )
     return scheduler

@@ -306,6 +306,35 @@ class LLMRouter:
         )
         return await client.generate(prompt, timeout=240.0)
 
+    async def accountability_insight(
+        self,
+        week_ending: str,
+        consistency: int,
+        focus_alignment: int,
+        momentum: int,
+        done_count: int,
+        scheduled_count: int,
+        focus: str,
+        goals: str,
+    ) -> str:
+        """
+        Light task: generate a 2-3 sentence coaching insight for a weekly accountability score.
+        Runs on Mac mini.
+        """
+        client = self._client(Complexity.LIGHT)
+        prompt = (
+            f"Week ending {week_ending}. A user received the following accountability scores:\n"
+            f"  Consistency:      {consistency}/10  ({done_count} tasks done out of {scheduled_count} scheduled)\n"
+            f"  Focus Alignment:  {focus_alignment}/10\n"
+            f"  Momentum:         {momentum}/10\n\n"
+            + (f"This week's focus: {focus}\n\n" if focus else "")
+            + f"Active goals:\n{goals[:600]}\n\n"
+            "Write 2-3 direct, specific sentences of coaching insight. "
+            "Mention the weakest dimension by name and give one concrete suggestion. "
+            "Be honest but encouraging. No generic platitudes. Output plain text only."
+        )
+        return await client.generate(prompt, timeout=60.0)
+
     async def generate_session_prompt(self, task: str, context: str) -> str:
         """
         Heavy task: write a detailed, self-contained prompt for an OpenClaw session.
