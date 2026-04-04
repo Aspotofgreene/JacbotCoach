@@ -136,15 +136,15 @@ Status values: Active | In Progress | Paused | Done
 - [2026-04-04] [SPAWN_FAILED] 🔄 Task description
 ```
 
-## Planned Features (not yet built)
-- **Research Queue** — /research <topic> queues topics; midnight job spawns OpenClaw to research and save markdown summaries to research/<date>-<topic>.md; morning briefing lists ready reports
-- **Overnight Project Builder** — /build <idea> queues a build request; overnight OpenClaw scaffolds a working prototype in ~/projects/
-- **Content Drafter** — /draft <topic> queues overnight first-draft writing (supports book goal); saves to drafts/<date>-<topic>.md
-- **Quick Idea Capture** — /idea <text> appends to ideas.md with no LLM processing; /ideas lists them; /promote_idea moves to backlog
-- **Weekly Planning Session** — Sunday evening bot proposes next week's focus based on what worked; user approves or adjusts with /approve or /focus
-- **Decision Journal** — /decide <question> gives a recommendation grounded in user's actual goals
-- **Accountability Scoring** — weekly 1-10 rating across consistency, focus alignment, momentum; tracked over time in memory/scores.json
-- **Voice Message Support** — Telegram voice notes transcribed via Whisper (runs on desktop GPU); transcription treated as a brain dump or coaching message, great for capturing ideas on the go
+## Planned Features
+- ✅ **Research Queue** — /research <topic> queues topics; midnight job spawns OpenClaw to research and save markdown summaries to research/<date>-<topic>.md; morning briefing lists ready reports
+- ⬜ **Overnight Project Builder** — /build <idea> queues a build request; overnight OpenClaw scaffolds a working prototype in ~/projects/
+- ✅ **Content Drafter** — /draft <topic> queues overnight first-draft writing (supports book goal); saves to drafts/<date>-<topic>.md
+- ✅ **Quick Idea Capture** — /idea <text> appends to ideas.md with no LLM processing; /ideas lists them; /promote_idea moves to backlog
+- ✅ **Weekly Planning Session** — Sunday evening bot proposes next week's focus based on what worked; user approves or adjusts with /approve or /focus
+- ⬜ **Decision Journal** — /decide <question> gives a recommendation grounded in user's actual goals
+- ⬜ **Accountability Scoring** — weekly 1-10 rating across consistency, focus alignment, momentum; tracked over time in memory/scores.json
+- ⬜ **Voice Message Support** — Telegram voice notes transcribed via Whisper (runs on desktop GPU); transcription treated as a brain dump or coaching message, great for capturing ideas on the go
 
 ## Git Workflow
 - Branch: `claude/build-jacbotcoach-bot-yutps`
