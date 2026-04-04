@@ -16,6 +16,7 @@ from jacbotcoach.bot.handlers import (
     goals_categories_command,
     goals_list_command,
     goals_reparse_command,
+    help_command,
     history_command,
     milestone_command,
     milestone_done_command,
@@ -24,7 +25,6 @@ from jacbotcoach.bot.handlers import (
     promote_command,
     research_command,
     research_list_command,
-    start_command,
     status_command,
     streak_done_command,
     streaks_command,
@@ -107,7 +107,8 @@ def main_sync() -> None:
     app.bot_data["settings"] = settings
 
     # Core
-    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("start", help_command))  # Telegram convention alias
     app.add_handler(CommandHandler("status", status_command))
 
     # Goals — ConversationHandler must come before individual command handlers

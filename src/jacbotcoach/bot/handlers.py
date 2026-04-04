@@ -32,8 +32,8 @@ def _is_allowed(update: Update) -> bool:
     return allowed
 
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.info("start_command received from user_id=%s", update.effective_user and update.effective_user.id)
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info("help_command received from user_id=%s", update.effective_user and update.effective_user.id)
     if not _is_allowed(update):
         return
     await update.message.reply_text(
