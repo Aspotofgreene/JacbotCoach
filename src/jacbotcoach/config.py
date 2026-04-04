@@ -29,11 +29,16 @@ class Settings(BaseSettings):
     # Scheduler
     daily_task_hour: int = 8
     daily_task_minute: int = 0
+    morning_brief_hour: int = 6
+    evening_reflection_hour: int = 20
+    stall_days: int = 7
     timezone: str = "America/New_York"
 
     # File paths
     autonomous_md_path: Path = Path("AUTONOMOUS.md")
     tasks_log_path: Path = Path("memory/tasks-log.md")
+    streaks_path: Path = Path("memory/streaks.json")
+    milestones_path: Path = Path("memory/milestones.md")
 
 
 @lru_cache(maxsize=1)

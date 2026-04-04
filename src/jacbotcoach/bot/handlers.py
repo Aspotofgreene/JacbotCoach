@@ -1,12 +1,16 @@
 import json
 import logging
 import re
-from telegram import Update
+from datetime import date, timedelta
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from jacbotcoach.config import get_settings
 from jacbotcoach.storage.autonomous import AutonomousStore
 from jacbotcoach.storage.focus import FocusStore
+from jacbotcoach.storage.milestones import MilestoneStore
+from jacbotcoach.storage.streaks import StreakStore
 from jacbotcoach.storage.tasks_log import TasksLog
 
 logger = logging.getLogger(__name__)
@@ -36,7 +40,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "JacbotCoach online.\n\n"
         "Goals:\n"
         "  /goals           — brain dump your goals (then /save, /confirm)\n"
-        "  /goals_list      — view all goals (flat list)\n"
+        "  /goals_list      — view all goals with action buttons\n"
         "  /goals_cat       — view goals by category\n"
         "  /goals_reparse   — re-structure goals through AI (fixes raw text)\n"
         "  /goal_done <title> — mark a goal complete\n"
@@ -44,7 +48,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "  /goal_edit <old> | <new> — rename a goal\n"
         "  /goal_delete <title> — remove a goal\n"
         "  /promote <item>  — move backlog item to active goals\n"
+        "  /history <title> — see task history for a goal\n"
         "  /status          — view the full goals file\n\n"
+        "Milestones:\n"
+        "  /milestone <goal> | <step> — add a milestone to a goal\n"
+        "  /milestone_done <goal> | <step> — mark a milestone complete\n"
+        "  /milestones <goal> — show milestones for a goal\n\n"
+        "Streaks:\n"
+        "  /streaks         — view habit streaks\n"
+        "  /streak_done <habit> — log a habit completion\n\n"
         "Focus:\n"
         "  /focus           — see current focus goals\n"
         "  /focus <goals>   — set weekly focus goals\n"
@@ -56,7 +68,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "  /update <msg>    — log a progress update\n\n"
         "Coaching:\n"
         "  /coach           — start a coaching conversation\n"
-        "  /endcoach        — end coaching session\n"
+        "  /endcoach        — end coaching session\n\n"
+        "Tip: You can also just type naturally, e.g. 'mark Learn Spanish as done'."
     )
 
 
@@ -99,8 +112,26 @@ async def goals_reparse_command(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(f"Failed to re-parse goals: {e}")
 
 
+def _extract_goal_rows(content: str) -> list[dict]:
+    """Extract goal rows from AUTONOMOUS.md as dicts with status/difficulty/title."""
+    goals = []
+    for line in content.splitlines():
+        line = line.strip()
+        if not (line.startswith("|") and "|" in line[1:]):
+            continue
+        if all(c in "-| " for c in line):
+            continue
+        parts = [p.strip() for p in line.strip("|").split("|")]
+        if len(parts) < 3:
+            continue
+        if parts[0] in ("Status", "Difficulty", "Frequency", "Goal", "Habit"):
+            continue
+        goals.append({"status": parts[0], "difficulty": parts[1], "title": parts[2]})
+    return goals
+
+
 async def goals_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show all goals as a flat numbered list regardless of category."""
+    """Show all goals as a numbered list with inline action buttons."""
     if not _is_allowed(update):
         return
     settings = get_settings()
@@ -109,36 +140,30 @@ async def goals_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("No goals yet. Use /goals to add some.")
         return
 
-    content = store.read()
-    # Extract all table rows (lines with | that aren't headers or separators)
-    goals = []
-    for line in content.splitlines():
-        line = line.strip()
-        if line.startswith("|") and "|" in line[1:]:
-            if all(c in "-| " for c in line):
-                continue  # separator row
-            parts = [p.strip() for p in line.strip("|").split("|")]
-            if len(parts) < 3:
-                continue
-            # Skip header rows: first cell is "Status", "Difficulty", "Frequency", etc.
-            if parts[0] in ("Status", "Difficulty", "Frequency", "Goal", "Habit"):
-                continue
-            goals.append(parts)
-
+    goals = _extract_goal_rows(store.read())
     if not goals:
-        await update.message.reply_text(
-            "Goals not yet categorized.\nUse /status to see the raw file."
-        )
+        await update.message.reply_text("Goals not yet categorized.\nUse /status to see the raw file.")
         return
 
-    lines = ["All goals:\n"]
-    for i, row in enumerate(goals, 1):
-        # Columns: Status | Difficulty/Frequency | Goal title | Notes
-        title = row[2] if len(row) > 2 else row[0]
-        difficulty = row[1] if len(row) > 1 else ""
-        lines.append(f"{i}. [{difficulty}] {title}")
+    # Send each goal as its own message with action buttons (Telegram 64-byte callback limit)
+    intro = f"Your goals ({len(goals)} total):"
+    await update.message.reply_text(intro)
 
-    await update.message.reply_text("\n".join(lines)[:4000])
+    for i, goal in enumerate(goals):
+        label = f"{i + 1}. [{goal['difficulty']}] {goal['title']}"
+        status = goal["status"]
+        # Build context-aware buttons
+        buttons = []
+        if status != "Done":
+            buttons.append(InlineKeyboardButton("✅ Done", callback_data=f"goal:done:{i}"))
+        if status == "Active":
+            buttons.append(InlineKeyboardButton("⏸ Pause", callback_data=f"goal:pause:{i}"))
+        if status == "Paused":
+            buttons.append(InlineKeyboardButton("▶️ Resume", callback_data=f"goal:resume:{i}"))
+        buttons.append(InlineKeyboardButton("🗑️ Delete", callback_data=f"goal:delete:{i}"))
+
+        keyboard = InlineKeyboardMarkup([buttons])
+        await update.message.reply_text(label, reply_markup=keyboard)
 
 
 async def goals_categories_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -167,12 +192,18 @@ async def goals_categories_command(update: Update, context: ContextTypes.DEFAULT
         for line in section.splitlines():
             line = line.strip()
             if line.startswith("|") and "|" in line[1:]:
+                if all(c in "-| " for c in line):
+                    continue
                 parts = [p.strip() for p in line.strip("|").split("|")]
-                if parts and not all(c in "-| " for c in line):
-                    if parts[0] not in ("Difficulty", "Frequency", "Goal", "Habit", "---"):
-                        label = parts[0]
-                        title = parts[1] if len(parts) > 1 else parts[0]
-                        rows.append(f"  [{label}] {title}")
+                if len(parts) < 3:
+                    continue
+                if parts[0] in ("Status", "Difficulty", "Frequency", "Goal", "Habit"):
+                    continue
+                # Columns: Status | Difficulty/Frequency | Goal title
+                status = parts[0]
+                difficulty = parts[1]
+                title = parts[2]
+                rows.append(f"  [{status} · {difficulty}] {title}")
             elif line.startswith("- ") and "Open Backlog" in section:
                 rows.append(f"  {line}")
 
@@ -459,3 +490,231 @@ async def promote_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"Item not found in backlog: '{item}'\n"
             "Use /status to check the exact text in Open Backlog."
         )
+
+
+async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/history <goal> — show task log entries related to a goal."""
+    if not _is_allowed(update):
+        return
+    query = " ".join(context.args) if context.args else ""
+    if not query:
+        await update.message.reply_text("Usage: /history <goal title>\nExample: /history Learn Spanish")
+        return
+    settings = get_settings()
+    log = TasksLog(settings.tasks_log_path)
+    keywords = [w for w in query.lower().split() if len(w) > 3]
+    matches = [
+        line.strip() for line in log.read_all().splitlines()
+        if line.strip().startswith("-") and any(kw in line.lower() for kw in keywords)
+    ]
+    if not matches:
+        await update.message.reply_text(
+            f"No task log entries found related to '{query}'.\n"
+            "Tasks are matched by keywords in the goal title."
+        )
+        return
+    await update.message.reply_text(
+        f"Task history for '{query}' ({len(matches)} entries):\n\n" +
+        "\n".join(matches[-20:])  # last 20 matching entries
+    )
+
+
+async def streaks_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/streaks — view current habit streaks."""
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    store = StreakStore(settings.streaks_path)
+    all_streaks = store.get_all()
+    if not all_streaks:
+        await update.message.reply_text(
+            "No streaks tracked yet.\n"
+            "Use /streak_done <habit> to log a habit and start a streak."
+        )
+        return
+    lines = ["Habit streaks:\n"]
+    for habit, data in all_streaks.items():
+        active = data["active"]
+        current = data["current"]
+        best = data["best"]
+        icon = "🔥" if active and current >= 3 else ("✅" if active else "💤")
+        lines.append(f"{icon} {habit}")
+        lines.append(f"   Current: {current} day{'s' if current != 1 else ''} | Best: {best}")
+    await update.message.reply_text("\n".join(lines))
+
+
+async def streak_done_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/streak_done <habit> — log a habit completion and update streak."""
+    if not _is_allowed(update):
+        return
+    habit = " ".join(context.args) if context.args else ""
+    if not habit:
+        await update.message.reply_text(
+            "Usage: /streak_done <habit name>\nExample: /streak_done Daily Exercise"
+        )
+        return
+    settings = get_settings()
+    store = StreakStore(settings.streaks_path)
+    result = store.record(habit)
+    current = result["current"]
+    lines = [f"🔥 {habit} — Day {current}!"]
+    if result["new_best"]:
+        lines.append(f"New personal best: {current} days!")
+    if result["motivation"]:
+        lines.append(f"\n{result['motivation']}")
+    await update.message.reply_text("\n".join(lines))
+
+
+async def milestone_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/milestone <goal> | <step> — add a milestone to a goal."""
+    if not _is_allowed(update):
+        return
+    text = " ".join(context.args) if context.args else ""
+    if "|" not in text:
+        await update.message.reply_text(
+            "Usage: /milestone <goal> | <milestone step>\n"
+            "Example: /milestone Publish Book | Write chapter outline"
+        )
+        return
+    parts = text.split("|", 1)
+    goal = parts[0].strip()
+    step = parts[1].strip()
+    if not goal or not step:
+        await update.message.reply_text("Both goal and milestone must be non-empty.")
+        return
+    settings = get_settings()
+    store = MilestoneStore(settings.milestones_path)
+    store.add(goal, step)
+    await update.message.reply_text(f"⬜ Milestone added to '{goal}':\n{step}")
+
+
+async def milestone_done_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/milestone_done <goal> | <step> — mark a milestone complete."""
+    if not _is_allowed(update):
+        return
+    text = " ".join(context.args) if context.args else ""
+    if "|" not in text:
+        await update.message.reply_text(
+            "Usage: /milestone_done <goal> | <milestone step>\n"
+            "Example: /milestone_done Publish Book | Write chapter outline"
+        )
+        return
+    parts = text.split("|", 1)
+    goal = parts[0].strip()
+    step = parts[1].strip()
+    settings = get_settings()
+    store = MilestoneStore(settings.milestones_path)
+    if store.complete(goal, step):
+        pct = store.progress_pct(goal)
+        msg = f"✅ Milestone complete:\n{step}"
+        if pct is not None:
+            msg += f"\n\nProgress on '{goal}': {pct}%"
+        await update.message.reply_text(msg)
+    else:
+        await update.message.reply_text(f"Milestone not found for goal '{goal}'.")
+
+
+async def milestones_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/milestones <goal> — show all milestones for a goal."""
+    if not _is_allowed(update):
+        return
+    goal = " ".join(context.args) if context.args else ""
+    if not goal:
+        await update.message.reply_text(
+            "Usage: /milestones <goal title>\nExample: /milestones Publish Book"
+        )
+        return
+    settings = get_settings()
+    store = MilestoneStore(settings.milestones_path)
+    summary = store.summary(goal)
+    pct = store.progress_pct(goal)
+    header = f"Milestones for '{goal}'"
+    if pct is not None:
+        header += f" ({pct}% complete)"
+    await update.message.reply_text(f"{header}\n\n{summary}")
+
+
+async def nl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Natural language fallback — handles plain text messages not caught by
+    other handlers. Classifies intent via LLM and routes to the right action.
+    """
+    if not _is_allowed(update):
+        return
+    message = update.message.text.strip()
+    if not message:
+        return
+
+    settings = get_settings()
+    store = AutonomousStore(settings.autonomous_md_path)
+    goals = store.read() if not store.is_empty() else ""
+
+    try:
+        from jacbotcoach.llm.router import LLMRouter
+        intent = await LLMRouter().detect_intent(message, goals)
+    except Exception as e:
+        logger.error("Intent detection failed: %s", e)
+        await update.message.reply_text(
+            "I didn't understand that. Use /start to see available commands."
+        )
+        return
+
+    action = intent.get("action", "unknown")
+    args = intent.get("args", "")
+    logger.info("NL intent: action=%s args=%s message=%s", action, args, message)
+
+    if action == "goal_done":
+        if store.mark_goal_done(args):
+            await update.message.reply_text(f"🏆 Goal marked complete: {args}")
+        else:
+            await update.message.reply_text(f"Goal not found: '{args}'. Use /goals_list to check titles.")
+
+    elif action == "goal_status":
+        if "|" in args:
+            title, status = args.split("|", 1)
+            store.update_goal_status(title.strip(), status.strip())
+            await update.message.reply_text(f"Updated '{title.strip()}' → {status.strip()}")
+        else:
+            await update.message.reply_text("Couldn't parse that. Try: /goal_status <title> <status>")
+
+    elif action == "goal_delete":
+        if store.delete_goal(args):
+            await update.message.reply_text(f"🗑️ Goal deleted: {args}")
+        else:
+            await update.message.reply_text(f"Goal not found: '{args}'.")
+
+    elif action == "streaks":
+        await streaks_command(update, context)
+
+    elif action == "tasks":
+        await tasks_command(update, context)
+
+    elif action == "trigger":
+        await trigger_command(update, context)
+
+    elif action == "status":
+        await status_command(update, context)
+
+    elif action == "focus":
+        if args:
+            FocusStore(settings.autonomous_md_path.parent / "focus.md").set(args)
+            await update.message.reply_text(f"🎯 Focus set: {args}")
+        else:
+            await focus_command(update, context)
+
+    elif action == "coach":
+        await update.message.reply_text("Starting coaching mode — use /coach to begin.")
+
+    elif action == "unknown":
+        await update.message.reply_text(
+            "I'm not sure what you meant. Use /start to see all commands, "
+            "or /coach to have a free-form conversation."
+        )
+
+    else:
+        # For actions that map cleanly to a reply from the LLM
+        reply = intent.get("reply", "")
+        if reply:
+            await update.message.reply_text(reply)
+        else:
+            await update.message.reply_text("Done. Use /start to see all commands.")

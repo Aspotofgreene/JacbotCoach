@@ -147,9 +147,10 @@ class LLMRouter:
         )
         return await client.generate(prompt, timeout=60.0)
 
-    async def generate_daily_tasks(self, autonomous_content: str) -> list[str]:
+    async def generate_daily_tasks(self, autonomous_content: str, count: int = 4) -> list[str]:
         """
-        Heavy task: reason over goals to produce 4-5 concrete executable tasks.
+        Heavy task: reason over goals to produce concrete executable tasks.
+        count is the target number of tasks (smart scheduling passes this).
         Runs on desktop GPU (with Mac mini fallback).
         """
         client = await self._client_with_fallback(Complexity.HEAVY)
@@ -158,7 +159,7 @@ class LLMRouter:
             f"Today is {today}. You are an autonomous task planner.\n\n"
             "Given the following goals and backlog:\n"
             f"{autonomous_content}\n\n"
-            "Generate exactly 4-5 concrete, self-contained tasks that can be "
+            f"Generate exactly {count} concrete, self-contained tasks that can be "
             "completed today by an AI agent with access to a computer, shell, "
             "web browser, and file system.\n\n"
             "Each task must be:\n"
@@ -171,7 +172,87 @@ class LLMRouter:
         )
         response = await client.generate(prompt, timeout=240.0)
         tasks = extract_json_list(response)
-        return tasks[:5]  # cap at 5
+        return tasks[:count]
+
+    async def detect_intent(self, message: str, goals: str) -> dict:
+        """
+        Light task: classify a free-text message into a bot action.
+        Returns {"action": str, "args": str, "reply": str}
+        Actions: goal_done | goal_status | goal_delete | goal_edit | promote |
+                 add_milestone | done_milestone | history | streaks | coach |
+                 trigger | tasks | focus | status | unknown
+        """
+        client = self._client(Complexity.LIGHT)
+        prompt = (
+            "You are parsing a message from a user of a productivity bot. "
+            "Classify the message into one of these actions and extract arguments.\n\n"
+            f"User's goals for context:\n{goals[:500]}\n\n"
+            f"Message: {message}\n\n"
+            "Output a single JSON object:\n"
+            '{"action": "<action>", "args": "<extracted arguments>", '
+            '"reply": "<short confirmation to show user>"}\n\n'
+            "Actions:\n"
+            "  goal_done   — user wants to mark a goal complete. args=goal title\n"
+            "  goal_status — user wants to update goal status. args='title | status'\n"
+            "  goal_delete — user wants to delete a goal. args=goal title\n"
+            "  goal_edit   — user wants to rename a goal. args='old | new'\n"
+            "  promote     — user wants to promote a backlog item. args=item text\n"
+            "  add_milestone — user wants to add a milestone. args='goal | milestone'\n"
+            "  done_milestone — user completed a milestone. args='goal | milestone'\n"
+            "  history     — user wants history for a goal. args=goal title\n"
+            "  streaks     — user asking about habit streaks. args=''\n"
+            "  coach       — user wants coaching conversation. args=''\n"
+            "  trigger     — user wants to generate tasks now. args=''\n"
+            "  tasks       — user wants to see today's tasks. args=''\n"
+            "  focus       — user wants to set/see focus. args=focus text or empty\n"
+            "  status      — user wants to see goals file. args=''\n"
+            "  unknown     — cannot classify. args=''\n\n"
+            "Output only the JSON."
+        )
+        raw = await client.generate(prompt, timeout=60.0)
+        try:
+            import json, re
+            m = re.search(r"\{.*\}", raw, re.DOTALL)
+            return json.loads(m.group(0)) if m else {"action": "unknown", "args": "", "reply": ""}
+        except Exception:
+            return {"action": "unknown", "args": "", "reply": ""}
+
+    async def stall_nudge(self, goal: str, days_inactive: int) -> str:
+        """Light task: generate a gentle nudge for a stalled goal."""
+        client = self._client(Complexity.LIGHT)
+        prompt = (
+            f"A user has not made progress on their goal for {days_inactive} days:\n"
+            f"Goal: {goal}\n\n"
+            "Write a single short, warm but direct motivational nudge (1-2 sentences). "
+            "Ask if they want to refocus, break it down, or pause it. "
+            "Do not be generic. Reference the goal specifically."
+        )
+        return await client.generate(prompt, timeout=60.0)
+
+    async def match_task_to_goal(self, task: str, goals: str) -> str | None:
+        """
+        Light task: find which goal a completed task is most related to.
+        Returns the goal title string, or None if no clear match.
+        """
+        client = self._client(Complexity.LIGHT)
+        prompt = (
+            "Given this completed task, identify which goal it most likely contributes to.\n\n"
+            f"Completed task: {task}\n\n"
+            f"Goals:\n{goals}\n\n"
+            'Output a JSON object: {"goal": "<exact goal title from the list or null>"}\n'
+            "If no goal clearly matches, set goal to null.\n"
+            "Output only the JSON."
+        )
+        raw = await client.generate(prompt, timeout=60.0)
+        try:
+            import json, re
+            m = re.search(r"\{.*\}", raw, re.DOTALL)
+            if m:
+                data = json.loads(m.group(0))
+                return data.get("goal")
+        except Exception:
+            pass
+        return None
 
     async def generate_session_prompt(self, task: str, context: str) -> str:
         """

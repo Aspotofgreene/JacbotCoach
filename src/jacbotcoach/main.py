@@ -1,8 +1,9 @@
 import asyncio
 import logging
 
-from telegram.ext import Application, CommandHandler
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
+from jacbotcoach.bot.callbacks import goal_callback
 from jacbotcoach.bot.coach import coach_conversation
 from jacbotcoach.bot.conversations import goals_conversation
 from jacbotcoach.bot.handlers import (
@@ -15,9 +16,16 @@ from jacbotcoach.bot.handlers import (
     goals_categories_command,
     goals_list_command,
     goals_reparse_command,
+    history_command,
+    milestone_command,
+    milestone_done_command,
+    milestones_command,
+    nl_handler,
     promote_command,
     start_command,
     status_command,
+    streak_done_command,
+    streaks_command,
     tasks_command,
     trigger_command,
     unfocus_command,
@@ -62,7 +70,7 @@ async def _post_init(application: Application) -> None:
     scheduler.start()
     application.bot_data["scheduler"] = scheduler
 
-    # Start background task to watch tasks-log.md for completions
+    # Background task to watch tasks-log.md for completions
     watcher_task = asyncio.create_task(
         watch_tasks_log(
             settings.tasks_log_path,
@@ -96,24 +104,49 @@ def main_sync() -> None:
     )
     app.bot_data["settings"] = settings
 
+    # Core
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("status", status_command))
+
+    # Goals — ConversationHandler must come before individual command handlers
+    # that share command names (e.g. /done inside the conversation)
+    app.add_handler(goals_conversation)
+    app.add_handler(coach_conversation)
+
     app.add_handler(CommandHandler("goals_list", goals_list_command))
     app.add_handler(CommandHandler("goals_cat", goals_categories_command))
     app.add_handler(CommandHandler("goals_reparse", goals_reparse_command))
-    app.add_handler(CommandHandler("tasks", tasks_command))
-    app.add_handler(CommandHandler("trigger", trigger_command))
-    app.add_handler(CommandHandler("done", done_command))
-    app.add_handler(CommandHandler("update", update_command))
-    app.add_handler(CommandHandler("focus", focus_command))
-    app.add_handler(CommandHandler("unfocus", unfocus_command))
     app.add_handler(CommandHandler("goal_done", goal_done_command))
     app.add_handler(CommandHandler("goal_status", goal_status_command))
     app.add_handler(CommandHandler("goal_edit", goal_edit_command))
     app.add_handler(CommandHandler("goal_delete", goal_delete_command))
     app.add_handler(CommandHandler("promote", promote_command))
-    app.add_handler(goals_conversation)
-    app.add_handler(coach_conversation)
+    app.add_handler(CommandHandler("history", history_command))
+
+    # Milestones
+    app.add_handler(CommandHandler("milestone", milestone_command))
+    app.add_handler(CommandHandler("milestone_done", milestone_done_command))
+    app.add_handler(CommandHandler("milestones", milestones_command))
+
+    # Streaks
+    app.add_handler(CommandHandler("streaks", streaks_command))
+    app.add_handler(CommandHandler("streak_done", streak_done_command))
+
+    # Focus
+    app.add_handler(CommandHandler("focus", focus_command))
+    app.add_handler(CommandHandler("unfocus", unfocus_command))
+
+    # Tasks
+    app.add_handler(CommandHandler("tasks", tasks_command))
+    app.add_handler(CommandHandler("trigger", trigger_command))
+    app.add_handler(CommandHandler("done", done_command))
+    app.add_handler(CommandHandler("update", update_command))
+
+    # Inline keyboard callbacks
+    app.add_handler(CallbackQueryHandler(goal_callback, pattern=r"^goal:"))
+
+    # Natural language fallback — must be last (lowest priority)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, nl_handler))
 
     logger.info("Starting JacbotCoach (polling)...")
     # run_polling() manages its own event loop — do NOT wrap in asyncio.run()

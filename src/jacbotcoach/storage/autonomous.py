@@ -177,6 +177,37 @@ class AutonomousStore:
             self.write("\n".join(lines))
         return updated
 
+    def update_goal_status_if(self, goal_title: str, current_status: str, new_status: str) -> bool:
+        """
+        Update goal status only if the current status matches current_status.
+        Used by the watcher to advance Active → In Progress without downgrading.
+        Returns True if the update was applied.
+        """
+        content = self.read()
+        lines = content.splitlines()
+        updated = False
+
+        for i, line in enumerate(lines):
+            if (
+                line.strip().startswith("|")
+                and goal_title.lower() in line.lower()
+                and not all(c in "-| " for c in line.strip())
+                and not any(h in line for h in ("Status", "Difficulty", "Frequency", "Goal", "Habit"))
+            ):
+                parts = [p.strip() for p in line.strip("|").split("|")]
+                if parts and parts[0] == current_status:
+                    lines[i] = re.sub(
+                        r"\|\s*(Active|In Progress|Paused|Done)\s*\|",
+                        f"| {new_status} |",
+                        line,
+                    )
+                    updated = True
+                break
+
+        if updated:
+            self.write("\n".join(lines))
+        return updated
+
     def delete_goal(self, goal_title: str) -> bool:
         """
         Remove a goal row entirely (any section).
