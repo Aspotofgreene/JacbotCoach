@@ -92,6 +92,17 @@ async def run_morning_brief_job(application: Application) -> None:
             lines.append(f"  • {item['topic']}")
             lines.append(f"    {item['output_path']}")
 
+    # Warn about research that was spawned overnight but produced no output
+    stale_reports = [
+        i for i in research_queue.get_all()
+        if i.get("status") == "spawned" and not Path(i.get("output_path", "")).exists()
+    ]
+    if stale_reports:
+        lines.append(f"\n⚠️ Research incomplete — OpenClaw may have failed ({len(stale_reports)}):")
+        for item in stale_reports:
+            lines.append(f"  • {item['topic']}")
+        lines.append("  Use /research_list for details.")
+
     # Ready drafts (spawned drafts whose output file now exists)
     draft_queue = DraftQueue(settings.draft_queue_path)
     ready_drafts = [
