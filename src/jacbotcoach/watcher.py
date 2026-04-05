@@ -42,14 +42,15 @@ async def watch_tasks_log(path: Path, bot, chat_id: int) -> None:
                     continue
                 if "[DONE]" in line:
                     task_desc = _format_log_line(line)
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=f"✅ Task completed:\n{task_desc}",
-                    )
-                    # Background: try to link task to a goal and update status
-                    asyncio.create_task(_link_task_to_goal(task_desc, bot, chat_id))
-                    # Background: check if it's habit-related and update streak
-                    asyncio.create_task(_auto_streak(task_desc, bot, chat_id))
+                    if task_desc.lower().startswith("research complete:"):
+                        asyncio.create_task(_notify_research_done(task_desc, bot, chat_id))
+                    else:
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=f"✅ Task completed:\n{task_desc}",
+                        )
+                        asyncio.create_task(_link_task_to_goal(task_desc, bot, chat_id))
+                        asyncio.create_task(_auto_streak(task_desc, bot, chat_id))
 
                 elif "[UPDATE]" in line:
                     await bot.send_message(
@@ -60,6 +61,30 @@ async def watch_tasks_log(path: Path, bot, chat_id: int) -> None:
 
         except Exception:
             logger.exception("Task log watcher error (will retry)")
+
+
+async def _notify_research_done(task_desc: str, bot, chat_id: int) -> None:
+    """Send a rich notification when an OpenClaw research agent finishes."""
+    try:
+        from jacbotcoach.config import get_settings
+        from jacbotcoach.storage.research_queue import ResearchQueue
+
+        settings = get_settings()
+        topic = task_desc[len("research complete:"):].strip()
+        queue = ResearchQueue(settings.research_queue_path)
+
+        output_path = None
+        for item in queue.get_all():
+            if item.get("topic", "").lower() == topic.lower() and item.get("output_path"):
+                output_path = item["output_path"]
+                break
+
+        msg = f"🔬 Research complete: {topic}"
+        if output_path:
+            msg += f"\n\nSaved to: {output_path}"
+        await bot.send_message(chat_id=chat_id, text=msg)
+    except Exception:
+        logger.debug("Research done notification failed (non-critical)", exc_info=True)
 
 
 async def _link_task_to_goal(task_desc: str, bot, chat_id: int) -> None:
