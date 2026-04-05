@@ -14,6 +14,7 @@ from jacbotcoach.openclaw.client import OpenClawClient
 from jacbotcoach.storage.autonomous import AutonomousStore
 from jacbotcoach.storage.focus import FocusStore
 from jacbotcoach.storage.draft_queue import DraftQueue
+from jacbotcoach.storage.project_queue import ProjectQueue
 from jacbotcoach.storage.research_queue import ResearchQueue
 from jacbotcoach.storage.tasks_log import TasksLog
 from jacbotcoach.storage.accountability import AccountabilityStore
@@ -101,6 +102,18 @@ async def run_morning_brief_job(application: Application) -> None:
         lines.append(f"\n✍️ Drafts ready ({len(ready_drafts)}):")
         for item in ready_drafts:
             lines.append(f"  • {item['topic']}")
+            lines.append(f"    {item['output_path']}")
+
+    # Ready project builds (spawned builds whose output dir now exists)
+    project_queue = ProjectQueue(settings.project_queue_path)
+    ready_builds = [
+        i for i in project_queue.get_all()
+        if i.get("status") == "spawned" and Path(i.get("output_path", "")).exists()
+    ]
+    if ready_builds:
+        lines.append(f"\n🔨 Builds ready ({len(ready_builds)}):")
+        for item in ready_builds:
+            lines.append(f"  • {item['idea']}")
             lines.append(f"    {item['output_path']}")
 
     target = _smart_task_count()
@@ -516,6 +529,70 @@ async def run_content_drafting_job(application: Application) -> None:
         )
 
 
+async def run_project_builder_job(application: Application) -> None:
+    """
+    2 AM job: for each pending idea in the project queue, spawn an
+    OpenClaw agent to scaffold a working prototype in projects/<slug>/.
+    """
+    settings = get_settings()
+    queue = ProjectQueue(settings.project_queue_path)
+    store = AutonomousStore(settings.autonomous_md_path)
+    claw = OpenClawClient(settings.openclaw_url, settings.openclaw_token)
+    router = LLMRouter()
+
+    pending = queue.get_pending()
+    if not pending:
+        logger.info("Project builder job: no pending ideas.")
+        return
+
+    logger.info("Project builder job: processing %d idea(s).", len(pending))
+    settings.projects_dir.mkdir(parents=True, exist_ok=True)
+    today_str = date.today().isoformat()
+    goals = store.read() if not store.is_empty() else ""
+
+    spawned = []
+    failed = []
+
+    for item in pending:
+        idea = item["idea"]
+        slug = re.sub(r"[^a-z0-9]+", "-", idea.lower()).strip("-")[:50]
+        output_path = settings.projects_dir / f"{today_str}-{slug}"
+
+        try:
+            build_prompt = await router.generate_build_prompt(
+                idea=idea,
+                goals=goals,
+                output_dir=str(output_path),
+            )
+            result = await claw.create_session(
+                prompt=build_prompt,
+                label=f"build-{slug}"[:80],
+            )
+            await queue.mark_spawned(idea, result.session_id, str(output_path))
+            spawned.append((idea, result.session_id, str(output_path)))
+            logger.info("Build spawned session %s for: %s", result.session_id, idea)
+        except Exception as e:
+            err_str = str(e)
+            logger.error("Build spawn failed for '%s': %s", idea, err_str)
+            await queue.mark_failed(idea, err_str)
+            failed.append((idea, err_str))
+
+    if spawned or failed:
+        lines = [f"🔨 Project builder job: {len(spawned)} project(s) dispatched.\n"]
+        for idea, sid, out in spawned:
+            lines.append(f"  • {idea}")
+            lines.append(f"    Session: {sid}")
+            lines.append(f"    Output: {out}")
+        if failed:
+            lines.append(f"\n⚠️ {len(failed)} failed to spawn:")
+            for idea, err in failed:
+                lines.append(f"  • {idea}: {err[:100]}")
+        await application.bot.send_message(
+            chat_id=settings.telegram_allowed_user_id,
+            text="\n".join(lines),
+        )
+
+
 async def run_accountability_scoring_job(application: Application) -> None:
     """
     Sunday 7 PM: compute a weekly 1-10 score across consistency, focus alignment,
@@ -730,6 +807,15 @@ def build_scheduler(application: Application) -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
+        run_project_builder_job,
+        trigger=CronTrigger(hour=settings.project_builder_hour, minute=0, timezone=tz),
+        args=[application],
+        id="project_builder",
+        name="Overnight Project Builder",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
         run_weekly_planning_job,
         trigger=CronTrigger(
             day_of_week="sun", hour=settings.weekly_planning_hour, minute=0, timezone=tz
@@ -754,13 +840,15 @@ def build_scheduler(application: Application) -> AsyncIOScheduler:
     logger.info(
         "Scheduler: brief %02d:00, tasks %02d:%02d, reflection %02d:00, "
         "stall Mon 07:00, summary Sun 09:00, planning Sun %02d:00, "
-        "accountability Sun %02d:00, research 00:00, drafting 01:00 (%s)",
+        "accountability Sun %02d:00, research 00:00, drafting 01:00, "
+        "project builder %02d:00 (%s)",
         settings.morning_brief_hour,
         settings.daily_task_hour,
         settings.daily_task_minute,
         settings.evening_reflection_hour,
         settings.weekly_planning_hour,
         settings.accountability_scoring_hour,
+        settings.project_builder_hour,
         settings.timezone,
     )
     return scheduler

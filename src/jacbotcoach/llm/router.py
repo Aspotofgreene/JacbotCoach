@@ -335,6 +335,39 @@ class LLMRouter:
         )
         return await client.generate(prompt, timeout=60.0)
 
+    async def generate_build_prompt(self, idea: str, goals: str, output_dir: str) -> str:
+        """
+        Heavy task: write a detailed build prompt for an OpenClaw session.
+        The agent will scaffold a working prototype in ~/projects/<slug>/.
+        Runs on desktop GPU (with Mac mini fallback).
+        """
+        client = await self._client_with_fallback(Complexity.HEAVY)
+        today = date.today().isoformat()
+        prompt = (
+            "Write a detailed, self-contained prompt for an autonomous AI agent "
+            "to scaffold a working software prototype for the following idea.\n\n"
+            f"Idea: {idea}\n\n"
+            f"User's goals and context:\n{goals}\n\n"
+            f"The agent has access to a Mac with shell, browser, file system, "
+            "and common developer tools (Python, Node, git, etc.).\n\n"
+            "The build prompt must instruct the agent to:\n"
+            "1. Analyze the idea and decide on the simplest viable tech stack\n"
+            "2. Create the project directory at exactly this path: " + output_dir + "\n"
+            "3. Scaffold a working prototype with:\n"
+            "   - A clear README.md describing what it does and how to run it\n"
+            "   - Runnable entry point (main.py, index.js, etc.)\n"
+            "   - Any required dependencies listed (requirements.txt, package.json, etc.)\n"
+            "   - At least one working feature demonstrating the core concept\n"
+            "4. Keep the implementation minimal but functional — no half-finished stubs\n"
+            "5. Tailor the prototype to support the user's active goals where relevant\n"
+            f"6. End with this exact line: "
+            f"'When done, append a ✅ line to memory/tasks-log.md in exactly this format: "
+            f"- [{today}] [DONE] ✅ Project built: {idea}'\n"
+            "7. Never edit AUTONOMOUS.md directly.\n\n"
+            "Output only the build prompt text."
+        )
+        return await client.generate(prompt, timeout=240.0)
+
     async def generate_session_prompt(self, task: str, context: str) -> str:
         """
         Heavy task: write a detailed, self-contained prompt for an OpenClaw session.

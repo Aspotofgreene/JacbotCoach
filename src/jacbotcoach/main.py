@@ -9,6 +9,8 @@ from jacbotcoach.bot.conversations import goals_conversation
 from jacbotcoach.bot.handlers import (
     approve_command,
     done_command,
+    build_command,
+    builds_command,
     draft_command,
     drafts_command,
     focus_command,
@@ -166,6 +168,10 @@ def main_sync() -> None:
     # Drafts
     app.add_handler(CommandHandler("draft", draft_command))
     app.add_handler(CommandHandler("drafts", drafts_command))
+
+    # Project Builder
+    app.add_handler(CommandHandler("build", build_command))
+    app.add_handler(CommandHandler("builds", builds_command))
 
     # Accountability Scoring
     app.add_handler(CommandHandler("score", score_command))
