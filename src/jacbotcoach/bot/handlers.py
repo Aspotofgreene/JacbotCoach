@@ -82,6 +82,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Drafts:\n"
         "  /draft <topic>     — queue overnight first-draft writing (supports book goal)\n"
         "  /drafts            — view draft queue and completed drafts\n\n"
+        "Builds:\n"
+        "  /build <idea>      — queue overnight prototype scaffolding by OpenClaw\n"
+        "  /builds            — view build queue and completed prototypes\n\n"
         "Accountability:\n"
         "  /score             — view this week's accountability score (1-10)\n"
         "  /scores            — view score history across all tracked weeks\n\n"
@@ -916,6 +919,86 @@ async def drafts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         lines.append(f"❌ Failed ({len(failed)}):")
         for item in failed:
             lines.append(f"  • {item['topic']}: {item.get('error', 'unknown')[:80]}")
+
+    await update.message.reply_text("\n".join(lines).strip())
+
+
+async def build_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/build <idea> — queue a project idea for overnight OpenClaw scaffolding."""
+    if not _is_allowed(update):
+        return
+    idea = " ".join(context.args) if context.args else ""
+    if not idea:
+        await update.message.reply_text(
+            "Usage: /build <idea>\n"
+            "Examples:\n"
+            "  /build CLI tool to batch rename files by regex\n"
+            "  /build Telegram bot that tracks daily water intake\n"
+            "  /build FastAPI service for personal link bookmarking\n\n"
+            "Overnight, an OpenClaw agent scaffolds a working prototype in ~/projects/.\n"
+            "Results are listed in your morning briefing."
+        )
+        return
+    settings = get_settings()
+    from jacbotcoach.storage.project_queue import ProjectQueue
+    queue = ProjectQueue(settings.project_queue_path)
+    count = await queue.enqueue(idea)
+    await update.message.reply_text(
+        f"🔨 Build queued: {idea}\n\n"
+        f"Queue depth: {count} project(s). "
+        "A prototype will be scaffolded overnight and listed in your morning briefing."
+    )
+
+
+async def builds_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/builds — show the project build queue and any completed prototypes."""
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    from jacbotcoach.storage.project_queue import ProjectQueue
+    queue = ProjectQueue(settings.project_queue_path)
+    all_items = queue.get_all()
+
+    if not all_items:
+        await update.message.reply_text(
+            "No builds queued. Use /build <idea> to queue a project."
+        )
+        return
+
+    pending = [i for i in all_items if i["status"] == "pending"]
+    spawned = [i for i in all_items if i["status"] == "spawned"]
+    failed = [i for i in all_items if i["status"] == "failed"]
+    ready = [
+        i for i in spawned
+        if Path(i.get("output_path", "NONE")).exists()
+    ]
+
+    lines = ["Project build queue:\n"]
+
+    if ready:
+        lines.append(f"✅ Ready prototypes ({len(ready)}):")
+        for item in ready:
+            lines.append(f"  • {item['idea']}")
+            lines.append(f"    {item['output_path']}")
+        lines.append("")
+
+    if pending:
+        lines.append(f"⏳ Pending ({len(pending)}):")
+        for item in pending:
+            lines.append(f"  • {item['idea']} (queued {item['queued_at']})")
+        lines.append("")
+
+    in_progress = [i for i in spawned if i not in ready]
+    if in_progress:
+        lines.append(f"🔄 In progress ({len(in_progress)}):")
+        for item in in_progress:
+            lines.append(f"  • {item['idea']}")
+        lines.append("")
+
+    if failed:
+        lines.append(f"❌ Failed ({len(failed)}):")
+        for item in failed:
+            lines.append(f"  • {item['idea']}: {item.get('error', 'unknown')[:80]}")
 
     await update.message.reply_text("\n".join(lines).strip())
 

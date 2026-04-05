@@ -28,6 +28,7 @@ JacbotCoach is made up of three layers working together:
 | Sun 7:00 PM | Accountability scoring — 1-10 score across consistency, focus, and momentum |
 | 12:00 AM | Research queue — spawns OpenClaw agents to research any queued topics |
 | 1:00 AM | Content drafting — spawns OpenClaw agents to write first drafts for any queued topics |
+| 2:00 AM | Project builder — spawns OpenClaw agents to scaffold prototypes for any queued build ideas |
 
 ### Smart Scheduling
 
@@ -53,6 +54,8 @@ Task count adjusts automatically by day of week:
 | `research/<date>-<topic>.md` | Markdown summaries produced by overnight research agents. |
 | `memory/draft-queue.json` | Content draft queue — tracks pending, in-progress, and completed drafts. |
 | `drafts/<date>-<topic>.md` | First-draft documents produced by overnight drafting agents. |
+| `memory/project-queue.json` | Project build queue — tracks pending, in-progress, and completed build requests. |
+| `projects/<date>-<slug>/` | Working prototypes scaffolded by overnight build agents. |
 | `memory/accountability-scores.json` | Weekly accountability scores — consistency, focus alignment, momentum, and overall rating. |
 
 ---
@@ -257,6 +260,17 @@ Queue topics or chapters for overnight first-draft writing. OpenClaw agents writ
 
 Drafts are saved to `drafts/<date>-<topic>.md` with a title heading, introduction, 3–5 body sections, and conclusion. Tone and depth are shaped by your goals context.
 
+### Project Builder
+
+Queue ideas for overnight prototype scaffolding. OpenClaw agents scaffold a working prototype with a README, runnable entry point, and dependencies. Results appear in the next morning's briefing.
+
+| Command | Description |
+|---|---|
+| `/build <idea>` | Queue a project idea for overnight scaffolding. Example: `/build CLI tool to batch rename files by regex` |
+| `/builds` | Show the build queue — pending, in-progress, and ready prototypes with directory paths. |
+
+Prototypes are saved to `projects/<date>-<slug>/` and include a README, at least one working feature demonstrating the core concept, and all required dependencies listed.
+
 ### Accountability Scoring
 
 Every Sunday at 7 PM, the bot automatically calculates a weekly 1-10 score across three dimensions and sends it to Telegram. Scores are tracked in `memory/accountability-scores.json` over time.
@@ -322,5 +336,8 @@ All settings are in `.env`. Copy `.env.example` to get started.
 | `RESEARCH_DIR` | `research` | Directory where research summaries are saved |
 | `DRAFT_QUEUE_PATH` | `memory/draft-queue.json` | Path to draft queue |
 | `DRAFTS_DIR` | `drafts` | Directory where draft documents are saved |
+| `PROJECT_QUEUE_PATH` | `memory/project-queue.json` | Path to project build queue |
+| `PROJECTS_DIR` | `projects` | Directory where scaffolded prototypes are saved |
+| `PROJECT_BUILDER_HOUR` | `2` | Hour to run overnight project builder (24h) |
 | `ACCOUNTABILITY_SCORES_PATH` | `memory/accountability-scores.json` | Path to weekly accountability scores |
 | `ACCOUNTABILITY_SCORING_HOUR` | `19` | Hour to run Sunday accountability scoring (24h) |

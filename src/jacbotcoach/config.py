@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     weekly_plan_path: Path = Path("memory/weekly_plan.json")
     draft_queue_path: Path = Path("memory/draft-queue.json")
     drafts_dir: Path = Path("drafts")
+    project_queue_path: Path = Path("memory/project-queue.json")
+    projects_dir: Path = Path("projects")
+    project_builder_hour: int = 2  # 2 AM daily
     weekly_planning_hour: int = 18  # 6 PM Sunday
     accountability_scoring_hour: int = 19  # 7 PM Sunday
 
