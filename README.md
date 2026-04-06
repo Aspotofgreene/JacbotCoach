@@ -22,7 +22,11 @@ JacbotCoach is made up of three layers working together:
 |---|---|
 | 6:00 AM | Morning briefing — goal status snapshot, yesterday's completions, today's task count, ready research reports and drafts |
 | 8:00 AM | Daily task generation — spawns OpenClaw agents (count varies by day) |
+| 10:00 AM | Check-in #1 — proactive deliverable progress check (if deliverables are set) |
+| 1:00 PM | Check-in #2 — midday deliverable progress check |
+| 4:00 PM | Check-in #3 — afternoon deliverable progress check |
 | 8:00 PM | Evening reflection — completion summary + prompt to log manual wins |
+| 9:00 PM | End-of-day wrap-up — deliverable summary, missed items analysis, coaching tip |
 | Mon 7:00 AM | Stall detection — nudges goals with no activity in the past 7 days |
 | Sun 9:00 AM | Weekly summary — accomplishments, stalled goals, recommendations |
 | Sun 7:00 PM | Accountability scoring — 1-10 score across consistency, focus, and momentum |
@@ -57,6 +61,7 @@ Task count adjusts automatically by day of week:
 | `memory/project-queue.json` | Project build queue — tracks pending, in-progress, and completed build requests. |
 | `projects/<date>-<slug>/` | Working prototypes scaffolded by overnight build agents. |
 | `memory/accountability-scores.json` | Weekly accountability scores — consistency, focus alignment, momentum, and overall rating. |
+| `memory/checkins.json` | Today's 3 deliverables — completion status and progress notes. Resets each day. |
 
 ---
 
@@ -271,6 +276,30 @@ Queue ideas for overnight prototype scaffolding. OpenClaw agents scaffold a work
 
 Prototypes are saved to `projects/<date>-<slug>/` and include a README, at least one working feature demonstrating the core concept, and all required dependencies listed.
 
+### Daily Check-Ins
+
+Each morning, send your top 3 specific, time-bound deliverables as a numbered list and the bot automatically saves them. No command needed — just type them.
+
+```
+1. Finish Chapter 1 draft by 11 AM
+2. Email clients by 2 PM
+3. Code review by 5 PM
+```
+
+The bot then checks in at 10 AM, 1 PM, and 4 PM with your current status, and wraps up at 9 PM with a coached summary of what was done and what slipped.
+
+| Command | Description |
+|---|---|
+| `/deliverables` | Show today's 3 deliverables and completion status. |
+| `/done_d <n>` | Mark deliverable n (1, 2, or 3) as complete. |
+| `/obstacle <n> <text>` | Report an obstacle on deliverable n. The bot responds immediately with 2-3 concrete unblocking suggestions. |
+
+**Tip:** You can also say things like *"done on deliverable 2"* or *"I'm stuck on number 1 because..."* in plain text — the bot will route it automatically.
+
+Obstacle advice runs immediately on the Mac mini LLM, so you get a response within seconds, not hours.
+
+---
+
 ### Accountability Scoring
 
 Every Sunday at 7 PM, the bot automatically calculates a weekly 1-10 score across three dimensions and sends it to Telegram. Scores are tracked in `memory/accountability-scores.json` over time.
@@ -341,3 +370,8 @@ All settings are in `.env`. Copy `.env.example` to get started.
 | `PROJECT_BUILDER_HOUR` | `2` | Hour to run overnight project builder (24h) |
 | `ACCOUNTABILITY_SCORES_PATH` | `memory/accountability-scores.json` | Path to weekly accountability scores |
 | `ACCOUNTABILITY_SCORING_HOUR` | `19` | Hour to run Sunday accountability scoring (24h) |
+| `CHECKINS_PATH` | `memory/checkins.json` | Path to today's deliverables data |
+| `CHECKIN_MORNING_HOUR` | `10` | Hour for the first daily check-in (24h) |
+| `CHECKIN_MIDDAY_HOUR` | `13` | Hour for the midday check-in (24h) |
+| `CHECKIN_AFTERNOON_HOUR` | `16` | Hour for the afternoon check-in (24h) |
+| `CHECKIN_EVENING_HOUR` | `21` | Hour for the end-of-day wrap-up (24h) |
