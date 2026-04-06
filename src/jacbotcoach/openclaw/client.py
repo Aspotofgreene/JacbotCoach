@@ -123,6 +123,14 @@ class OpenClawClient:
         cmd = self._build_agent_cmd(prompt, thinking)
         logger.info("Spawning OpenClaw agent: label=%r thinking=%s", label, thinking)
 
+        # Pass gateway token via env vars so the CLI can authenticate.
+        # OpenClaw CLI may check any of these depending on version.
+        import os as _os
+        spawn_env = _os.environ.copy()
+        if self._token:
+            for env_key in ("OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_TOKEN", "OPENCLAW_AUTH_TOKEN"):
+                spawn_env[env_key] = self._token
+
         # First, try a quick launch to grab the session ID from JSON output.
         # We wait up to 10s. If OpenClaw responds quickly (short tasks or
         # immediate acknowledgement), great. Otherwise we re-launch with
@@ -133,6 +141,7 @@ class OpenClawClient:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=working_dir,
+            env=spawn_env,
         )
 
         try:
@@ -175,6 +184,7 @@ class OpenClawClient:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
                 cwd=working_dir,
+                env=spawn_env,
             )
             session_id = _slugify(label) or f"pid-{bg_proc.pid}"
             logger.info(
