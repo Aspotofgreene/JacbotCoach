@@ -281,11 +281,14 @@ class LLMRouter:
         )
         return await client.generate(prompt, timeout=180.0)
 
-    async def generate_draft_prompt(self, topic: str, goals: str, output_path: str) -> str:
+    async def generate_draft_prompt(
+        self, topic: str, goals: str, output_path: str, tasks_log_path: str = "memory/tasks-log.md"
+    ) -> str:
         """
         Heavy task: write a detailed drafting prompt for an OpenClaw session.
         The agent will produce a first-draft markdown document on the topic.
         Runs on desktop GPU (with Mac mini fallback).
+        tasks_log_path should be an absolute path so OpenClaw writes to the right file.
         """
         client = await self._client_with_fallback(Complexity.HEAVY)
         today = date.today().isoformat()
@@ -303,7 +306,7 @@ class LLMRouter:
             f"5. Save the draft as a markdown file at exactly this path: {output_path}\n"
             "6. The file must start with a # heading matching the topic\n"
             f"7. End with this exact line: "
-            f"'When done, append a ✅ line to memory/tasks-log.md in exactly this format: "
+            f"'When done, append a ✅ line to {tasks_log_path} in exactly this format: "
             f"- [{today}] [DONE] ✅ Draft complete: {topic}'\n"
             "8. Never edit AUTONOMOUS.md directly.\n\n"
             "Output only the drafting prompt text."
@@ -339,11 +342,14 @@ class LLMRouter:
         )
         return await client.generate(prompt, timeout=60.0)
 
-    async def generate_build_prompt(self, idea: str, goals: str, output_dir: str) -> str:
+    async def generate_build_prompt(
+        self, idea: str, goals: str, output_dir: str, tasks_log_path: str = "memory/tasks-log.md"
+    ) -> str:
         """
         Heavy task: write a detailed build prompt for an OpenClaw session.
-        The agent will scaffold a working prototype in ~/projects/<slug>/.
+        The agent will scaffold a working prototype in projects/<slug>/.
         Runs on desktop GPU (with Mac mini fallback).
+        tasks_log_path should be an absolute path so OpenClaw writes to the right file.
         """
         client = await self._client_with_fallback(Complexity.HEAVY)
         today = date.today().isoformat()
@@ -365,7 +371,7 @@ class LLMRouter:
             "4. Keep the implementation minimal but functional — no half-finished stubs\n"
             "5. Tailor the prototype to support the user's active goals where relevant\n"
             f"6. End with this exact line: "
-            f"'When done, append a ✅ line to memory/tasks-log.md in exactly this format: "
+            f"'When done, append a ✅ line to {tasks_log_path} in exactly this format: "
             f"- [{today}] [DONE] ✅ Project built: {idea}'\n"
             "7. Never edit AUTONOMOUS.md directly.\n\n"
             "Output only the build prompt text."
@@ -460,10 +466,13 @@ class LLMRouter:
         )
         return await client.generate(prompt, timeout=90.0)
 
-    async def generate_session_prompt(self, task: str, context: str) -> str:
+    async def generate_session_prompt(
+        self, task: str, context: str, tasks_log_path: str = "memory/tasks-log.md"
+    ) -> str:
         """
         Heavy task: write a detailed, self-contained prompt for an OpenClaw session.
         Runs on desktop GPU (with Mac mini fallback).
+        tasks_log_path should be an absolute path so OpenClaw writes to the right file.
         """
         client = await self._client_with_fallback(Complexity.HEAVY)
         prompt = (
@@ -476,8 +485,8 @@ class LLMRouter:
             "1. What to do (step-by-step if needed)\n"
             "2. Clear success criteria\n"
             "3. Where to save any output files\n"
-            "4. This exact line at the end: "
-            "'When done, append a ✅ line to memory/tasks-log.md. "
+            f"4. This exact line at the end: "
+            f"'When done, append a ✅ line to {tasks_log_path}. "
             "Never edit AUTONOMOUS.md directly.'\n\n"
             "Output only the prompt text."
         )

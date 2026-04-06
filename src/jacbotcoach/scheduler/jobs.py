@@ -28,6 +28,15 @@ logger = logging.getLogger(__name__)
 _TASK_COUNT_BY_DOW = {0: 5, 1: 4, 2: 4, 3: 4, 4: 3, 5: 2, 6: 2}
 
 
+def _project_root() -> Path:
+    """
+    Return the absolute path to the project root (the directory containing
+    AUTONOMOUS.md). Using .resolve() means this works regardless of where the
+    process was launched from, so OpenClaw receives correct absolute paths.
+    """
+    return get_settings().autonomous_md_path.resolve().parent
+
+
 def _smart_task_count() -> int:
     return _TASK_COUNT_BY_DOW[date.today().weekday()]
 
@@ -154,6 +163,7 @@ async def run_daily_job(application: Application) -> None:
     log = TasksLog(settings.tasks_log_path)
     router = LLMRouter()
     claw = OpenClawClient(settings.openclaw_url, settings.openclaw_token)
+    tasks_log_abs = str(_project_root() / settings.tasks_log_path)
 
     content = store.read()
     if store.is_empty():
@@ -195,7 +205,7 @@ async def run_daily_job(application: Application) -> None:
 
     for task in tasks:
         try:
-            session_prompt = await router.generate_session_prompt(task, content)
+            session_prompt = await router.generate_session_prompt(task, content, tasks_log_path=tasks_log_abs)
             result = await claw.create_session(prompt=session_prompt, label=task[:80])
             await log.append(task, status="SCHEDULED")
             spawned.append((task, result.session_id))
@@ -422,7 +432,10 @@ async def run_research_job(application: Application) -> None:
         return
 
     logger.info("Research job: processing %d topic(s).", len(pending))
-    settings.research_dir.mkdir(parents=True, exist_ok=True)
+    root = _project_root()
+    output_dir = (root / settings.research_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tasks_log_abs = root / settings.tasks_log_path
     today_str = date.today().isoformat()
 
     spawned = []
@@ -431,7 +444,7 @@ async def run_research_job(application: Application) -> None:
     for item in pending:
         topic = item["topic"]
         slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:50]
-        output_path = settings.research_dir / f"{today_str}-{slug}.md"
+        output_path = output_dir / f"{today_str}-{slug}.md"
 
         prompt = (
             f"Research the following topic thoroughly and produce a detailed markdown summary.\n\n"
@@ -444,7 +457,7 @@ async def run_research_job(application: Application) -> None:
             f"- Further reading recommendations\n\n"
             f"Save your complete research summary as a markdown file at: {output_path}\n"
             f"The file should start with a # heading and be well-structured with clear sections.\n\n"
-            f"When done, append a ✅ line to memory/tasks-log.md in exactly this format:\n"
+            f"When done, append a ✅ line to {tasks_log_abs} in exactly this format:\n"
             f"- [{today_str}] [DONE] ✅ Research complete: {topic}\n\n"
             f"Never edit AUTONOMOUS.md directly."
         )
@@ -497,7 +510,10 @@ async def run_content_drafting_job(application: Application) -> None:
         return
 
     logger.info("Content drafting job: processing %d draft(s).", len(pending))
-    settings.drafts_dir.mkdir(parents=True, exist_ok=True)
+    root = _project_root()
+    output_dir = root / settings.drafts_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tasks_log_abs = root / settings.tasks_log_path
     today_str = date.today().isoformat()
     goals = store.read() if not store.is_empty() else ""
 
@@ -507,13 +523,14 @@ async def run_content_drafting_job(application: Application) -> None:
     for item in pending:
         topic = item["topic"]
         slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:50]
-        output_path = settings.drafts_dir / f"{today_str}-{slug}.md"
+        output_path = output_dir / f"{today_str}-{slug}.md"
 
         try:
             draft_prompt = await router.generate_draft_prompt(
                 topic=topic,
                 goals=goals,
                 output_path=str(output_path),
+                tasks_log_path=str(tasks_log_abs),
             )
             result = await claw.create_session(
                 prompt=draft_prompt,
@@ -561,7 +578,10 @@ async def run_project_builder_job(application: Application) -> None:
         return
 
     logger.info("Project builder job: processing %d idea(s).", len(pending))
-    settings.projects_dir.mkdir(parents=True, exist_ok=True)
+    root = _project_root()
+    output_dir = root / settings.projects_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tasks_log_abs = root / settings.tasks_log_path
     today_str = date.today().isoformat()
     goals = store.read() if not store.is_empty() else ""
 
@@ -571,13 +591,14 @@ async def run_project_builder_job(application: Application) -> None:
     for item in pending:
         idea = item["idea"]
         slug = re.sub(r"[^a-z0-9]+", "-", idea.lower()).strip("-")[:50]
-        output_path = settings.projects_dir / f"{today_str}-{slug}"
+        output_path = output_dir / f"{today_str}-{slug}"
 
         try:
             build_prompt = await router.generate_build_prompt(
                 idea=idea,
                 goals=goals,
                 output_dir=str(output_path),
+                tasks_log_path=str(tasks_log_abs),
             )
             result = await claw.create_session(
                 prompt=build_prompt,
