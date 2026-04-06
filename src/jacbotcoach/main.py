@@ -12,6 +12,7 @@ from jacbotcoach.bot.handlers import (
     build_command,
     builds_command,
     draft_command,
+    draft_trigger_command,
     drafts_command,
     focus_command,
     goal_delete_command,
@@ -168,6 +169,7 @@ def main_sync() -> None:
     # Drafts
     app.add_handler(CommandHandler("draft", draft_command))
     app.add_handler(CommandHandler("drafts", drafts_command))
+    app.add_handler(CommandHandler("draft_trigger", draft_trigger_command))
 
     # Project Builder
     app.add_handler(CommandHandler("build", build_command))
