@@ -498,6 +498,7 @@ async def run_content_drafting_job(application: Application) -> None:
     today_str = date.today().isoformat()
     # Use absolute path so OpenClaw always knows exactly where to write
     drafts_abs = settings.drafts_dir.resolve()
+    tasks_log_abs = settings.tasks_log_path.resolve()
 
     spawned = []
     failed = []
@@ -507,30 +508,21 @@ async def run_content_drafting_job(application: Application) -> None:
         slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:50]
         output_path = drafts_abs / f"{today_str}-{slug}.md"
 
+        # Keep prompt short and direct — complex multi-step instructions
+        # cause the embedded agent to reason but not actually write files.
         prompt = (
-            f"Write a detailed first draft on the following topic and save it as a markdown file.\n\n"
-            f"Topic: {topic}\n\n"
-            f"Instructions:\n"
-            f"1. Write a substantial first draft (800–2000 words) in clear, engaging prose\n"
-            f"2. Structure it with:\n"
-            f"   - A # title heading at the top\n"
-            f"   - An introduction paragraph\n"
-            f"   - 3–5 clearly labeled sections (## headings)\n"
-            f"   - A conclusion\n"
-            f"3. Use a thoughtful, literary tone suited to long-form storytelling or essays\n"
-            f"4. Save the complete draft to this EXACT absolute path: {output_path}\n"
-            f"   Do NOT save it anywhere else. Create the file at that exact path.\n\n"
-            f"When the file is saved, append exactly this line to "
-            f"{settings.tasks_log_path.resolve()}:\n"
-            f"- [{today_str}] [DONE] ✅ Draft complete: {topic[:80]}\n\n"
-            f"Never edit AUTONOMOUS.md directly."
+            f"Write a 1000-word first draft about the following topic. "
+            f"Save it as a markdown file at {output_path}. "
+            f"Use a # title heading, short intro, 3 sections with ## headings, and a conclusion. "
+            f"After saving, append this exact line to {tasks_log_abs}: "
+            f"- [{today_str}] [DONE] ✅ Draft complete: {topic[:80]}"
         )
 
         try:
             result = await claw.create_session(
                 prompt=prompt,
                 label=f"draft-{slug}"[:80],
-                thinking="low",
+                thinking="medium",
             )
             await queue.mark_spawned(topic, result.session_id, str(output_path))
             spawned.append((topic, result.session_id, str(output_path)))
