@@ -480,13 +480,14 @@ async def run_research_job(application: Application) -> None:
 
 async def run_content_drafting_job(application: Application) -> None:
     """
-    1 AM job: for each pending topic in the draft queue, spawn an
-    OpenClaw agent to write a first-draft document and save it to
-    drafts/<date>-<slug>.md.
+    1 AM job: generate drafts directly via LLM and write them to disk.
+    Uses the LLM router (desktop GPU) instead of OpenClaw — OpenClaw
+    reliably handles short file writes but not long-form content generation.
     """
     settings = get_settings()
     queue = DraftQueue(settings.draft_queue_path)
-    claw = OpenClawClient(settings.openclaw_url, settings.openclaw_token)
+    router = LLMRouter()
+    log = TasksLog(settings.tasks_log_path)
 
     pending = queue.get_pending()
     if not pending:
@@ -496,53 +497,38 @@ async def run_content_drafting_job(application: Application) -> None:
     logger.info("Content drafting job: processing %d draft(s).", len(pending))
     settings.drafts_dir.mkdir(parents=True, exist_ok=True)
     today_str = date.today().isoformat()
-    # Use absolute path so OpenClaw always knows exactly where to write
-    drafts_abs = settings.drafts_dir.resolve()
-    tasks_log_abs = settings.tasks_log_path.resolve()
 
-    spawned = []
+    written = []
     failed = []
 
     for item in pending:
         topic = item["topic"]
         slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:50]
-        output_path = drafts_abs / f"{today_str}-{slug}.md"
-
-        # Keep prompt short and direct — complex multi-step instructions
-        # cause the embedded agent to reason but not actually write files.
-        prompt = (
-            f"Write a 1000-word first draft about the following topic. "
-            f"Save it as a markdown file at {output_path}. "
-            f"Use a # title heading, short intro, 3 sections with ## headings, and a conclusion. "
-            f"After saving, append this exact line to {tasks_log_abs}: "
-            f"- [{today_str}] [DONE] ✅ Draft complete: {topic[:80]}"
-        )
+        output_path = settings.drafts_dir / f"{today_str}-{slug}.md"
 
         try:
-            result = await claw.create_session(
-                prompt=prompt,
-                label=f"draft-{slug}"[:80],
-                thinking="medium",
-            )
-            await queue.mark_spawned(topic, result.session_id, str(output_path))
-            spawned.append((topic, result.session_id, str(output_path)))
-            logger.info("Draft spawned session %s for: %s", result.session_id, topic)
+            logger.info("Generating draft via LLM for: %s", topic[:80])
+            content = await router.generate_draft(topic)
+            output_path.write_text(content, encoding="utf-8")
+            await queue.mark_spawned(topic, "llm-direct", str(output_path))
+            await log.append(f"Draft complete: {topic[:80]}", status="DONE")
+            written.append((topic, str(output_path)))
+            logger.info("Draft written to %s", output_path)
         except Exception as e:
             err_str = str(e)
-            logger.error("Draft spawn failed for '%s': %s", topic, err_str)
+            logger.error("Draft failed for '%s': %s", topic, err_str)
             await queue.mark_failed(topic, err_str)
             failed.append((topic, err_str))
 
-    if spawned or failed:
-        lines = [f"✍️ Content drafting job: {len(spawned)} draft(s) dispatched.\n"]
-        for topic, sid, out in spawned:
-            lines.append(f"  • {topic}")
-            lines.append(f"    Session: {sid}")
-            lines.append(f"    Output: {out}")
+    if written or failed:
+        lines = [f"✍️ {len(written)} draft(s) ready:\n"]
+        for topic, out in written:
+            lines.append(f"  • {topic[:80]}")
+            lines.append(f"    {out}")
         if failed:
-            lines.append(f"\n⚠️ {len(failed)} failed to spawn:")
+            lines.append(f"\n⚠️ {len(failed)} failed:")
             for topic, err in failed:
-                lines.append(f"  • {topic}: {err[:100]}")
+                lines.append(f"  • {topic[:60]}: {err[:100]}")
         await application.bot.send_message(
             chat_id=settings.telegram_allowed_user_id,
             text="\n".join(lines),
