@@ -10,6 +10,7 @@ from telegram.ext import ContextTypes
 from jacbotcoach.config import get_settings
 from jacbotcoach.storage.accountability import AccountabilityStore
 from jacbotcoach.storage.autonomous import AutonomousStore
+from jacbotcoach.storage.coach_notes import CoachNotesStore
 from jacbotcoach.storage.focus import FocusStore
 from jacbotcoach.storage.milestones import MilestoneStore
 from jacbotcoach.storage.streaks import StreakStore
@@ -71,7 +72,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "  /update <msg>    — log a progress update\n\n"
         "Coaching:\n"
         "  /coach           — start a coaching conversation\n"
-        "  /endcoach        — end coaching session\n\n"
+        "  /endcoach        — end coaching session (auto-saves summary)\n"
+        "  /coach_notes     — review saved coaching session summaries\n\n"
         "Ideas:\n"
         "  /idea <text>       — capture a quick idea instantly\n"
         "  /ideas             — list all captured ideas\n"
@@ -651,6 +653,22 @@ async def milestones_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if pct is not None:
         header += f" ({pct}% complete)"
     await update.message.reply_text(f"{header}\n\n{summary}")
+
+
+async def coach_notes_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/coach_notes — show the last 5 coaching session summaries."""
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    store = CoachNotesStore(settings.coach_notes_path)
+    if store.is_empty():
+        await update.message.reply_text(
+            "No coaching notes saved yet.\n"
+            "Start a session with /coach — notes are saved automatically when you /endcoach."
+        )
+        return
+    notes = store.read_recent(n=5)
+    await update.message.reply_text(f"📓 Recent coaching notes:\n\n{notes}"[:4000])
 
 
 async def research_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

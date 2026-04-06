@@ -109,7 +109,9 @@ class LLMRouter:
         )
         return await client.generate(prompt, timeout=180.0)
 
-    async def coach_response(self, message: str, goals: str, history: list[dict]) -> str:
+    async def coach_response(
+        self, message: str, goals: str, history: list[dict], prior_notes: str = ""
+    ) -> str:
         """
         Light task: respond to a free-form coaching message.
         Runs on Mac mini for fast back-and-forth.
@@ -123,11 +125,35 @@ class LLMRouter:
             "You are a direct, practical life and productivity coach. "
             "You know the user's goals and give honest, actionable advice.\n\n"
             f"User's goals:\n{goals}\n\n"
+            + (f"Notes from recent coaching sessions:\n{prior_notes}\n\n" if prior_notes else "")
             + (f"Recent conversation:\n{history_text}\n\n" if history_text else "")
             + f"User: {message}\n\n"
             "Coach (respond in 2-4 sentences, be direct and specific):"
         )
         return await client.generate(prompt, timeout=120.0)
+
+    async def summarize_coaching_session(self, history: list[dict], goals: str) -> str:
+        """
+        Light task: distill a coaching session into bullet-point notes.
+        Saved to memory/coach-notes.md for future session continuity.
+        """
+        client = self._client(Complexity.LIGHT)
+        history_text = "\n".join(
+            f"{'User' if m['role'] == 'user' else 'Coach'}: {m['content']}"
+            for m in history
+        )
+        prompt = (
+            "Summarize this coaching conversation into concise notes.\n\n"
+            f"User's goals for context:\n{goals}\n\n"
+            f"Conversation:\n{history_text}\n\n"
+            "Write 3-5 bullet points covering:\n"
+            "- Key insights or realizations\n"
+            "- Any decisions made or actions committed to\n"
+            "- Blockers or concerns raised\n\n"
+            "Keep it under 120 words. Be specific, not generic. "
+            "Output only the bullet points."
+        )
+        return await client.generate(prompt, timeout=90.0)
 
     async def classify_backlog_item(self, item: str, goals: str) -> str:
         """
