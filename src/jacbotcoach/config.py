@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     # Accountability Scoring
     accountability_scores_path: Path = Path("memory/accountability-scores.json")
 
+    # Daily check-ins / deliverables
+    checkins_path: Path = Path("memory/checkins.json")
+    checkin_morning_hour: int = 10   # 10 AM
+    checkin_midday_hour: int = 13    # 1 PM
+    checkin_afternoon_hour: int = 16  # 4 PM
+    checkin_evening_hour: int = 21   # 9 PM end-of-day wrap-up
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

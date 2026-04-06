@@ -206,6 +206,10 @@ class LLMRouter:
             "  tasks       — user wants to see today's tasks. args=''\n"
             "  focus       — user wants to set/see focus. args=focus text or empty\n"
             "  status      — user wants to see goals file. args=''\n"
+            "  deliverable_done — user says they completed one of their daily deliverables. "
+            "args=deliverable number (1, 2, or 3) as a digit string\n"
+            "  deliverable_obstacle — user reports being stuck on a deliverable. "
+            "args='<n> | <obstacle description>'\n"
             "  unknown     — cannot classify. args=''\n\n"
             "Output only the JSON."
         )
@@ -367,6 +371,94 @@ class LLMRouter:
             "Output only the build prompt text."
         )
         return await client.generate(prompt, timeout=240.0)
+
+    async def parse_deliverables(self, message: str) -> list[str]:
+        """
+        Light task: extract up to 3 deliverables from a morning message.
+        Returns a list of 1-3 deliverable strings (empty list on failure).
+        """
+        client = self._client(Complexity.LIGHT)
+        prompt = (
+            "The user is setting their top deliverables for today. "
+            "Extract up to 3 specific, time-bound tasks from the message below.\n\n"
+            f"Message: {message}\n\n"
+            "Output a JSON array of strings (1-3 items). Each item should be the deliverable "
+            "as the user stated it, preserving any time targets (e.g. 'Finish Chapter 1 by 11 AM'). "
+            "If the message contains fewer than 3 deliverables, return only what is present.\n"
+            'Example: ["Finish Chapter 1 draft by 11 AM", "Email clients by 2 PM", "Code review by 5 PM"]\n\n'
+            "Output only the JSON array, no other text."
+        )
+        raw = await client.generate(prompt, timeout=60.0)
+        try:
+            import json, re
+            m = re.search(r"\[.*\]", raw, re.DOTALL)
+            if m:
+                result = json.loads(m.group(0))
+                return [str(x).strip() for x in result if str(x).strip()][:3]
+        except Exception:
+            pass
+        return []
+
+    async def obstacle_advice(self, deliverable: str, obstacle: str) -> str:
+        """
+        Light task: generate immediate, concrete advice for an obstacle on a deliverable.
+        Runs on Mac mini for fast response.
+        """
+        client = self._client(Complexity.LIGHT)
+        prompt = (
+            "A user is working on the following deliverable and has hit an obstacle.\n\n"
+            f"Deliverable: {deliverable}\n"
+            f"Obstacle: {obstacle}\n\n"
+            "Give 2-3 concrete, actionable suggestions to unblock them right now. "
+            "Be specific — mention techniques, tools, or reframes that directly address "
+            "the stated obstacle. Do not be generic. "
+            "Keep the response under 100 words. Output plain text."
+        )
+        return await client.generate(prompt, timeout=60.0)
+
+    async def checkin_nudge(self, deliverables_summary: str, time_label: str) -> str:
+        """
+        Light task: generate a brief, energetic mid-day check-in message.
+        Runs on Mac mini.
+        """
+        client = self._client(Complexity.LIGHT)
+        prompt = (
+            f"It's {time_label}. Write a short, energetic check-in message (1-2 sentences) "
+            "asking the user to quickly confirm their progress on today's deliverables. "
+            "Be direct and encouraging — not generic. Reference the time of day.\n\n"
+            f"Today's deliverables status:\n{deliverables_summary}\n\n"
+            "Output only the check-in sentence(s), no preamble."
+        )
+        return await client.generate(prompt, timeout=60.0)
+
+    async def evening_deliverable_summary(self, deliverables: list[dict]) -> str:
+        """
+        Light task: generate an end-of-day wrap-up with completions, misses, and tomorrow tip.
+        Runs on Mac mini.
+        """
+        client = self._client(Complexity.LIGHT)
+        done = [d for d in deliverables if d.get("done")]
+        missed = [d for d in deliverables if not d.get("done")]
+        notes_text = ""
+        for d in deliverables:
+            if d.get("notes"):
+                notes_text += f"\n  #{d['id']} notes: {'; '.join(d['notes'])}"
+
+        prompt = (
+            "Write a brief end-of-day accountability summary for a productivity bot user.\n\n"
+            f"Completed ({len(done)}/{len(deliverables)}):\n"
+            + ("".join(f"  ✅ {d['text']}\n" for d in done) or "  (none)\n")
+            + f"\nMissed ({len(missed)}):\n"
+            + ("".join(f"  ❌ {d['text']}\n" for d in missed) or "  (none)\n")
+            + (f"\nProgress notes from the day:{notes_text}\n" if notes_text else "")
+            + "\nCover in 3-4 sentences:\n"
+            "1. Acknowledge what was completed (be specific)\n"
+            "2. For each missed item, offer one honest sentence on why it may have slipped "
+            "and one concrete suggestion for tomorrow\n"
+            "3. End with one forward-looking tip for tomorrow\n\n"
+            "Be direct, specific, and actionable. No generic platitudes. Output plain text."
+        )
+        return await client.generate(prompt, timeout=90.0)
 
     async def generate_session_prompt(self, task: str, context: str) -> str:
         """

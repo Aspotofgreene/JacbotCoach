@@ -8,7 +8,10 @@ from jacbotcoach.bot.coach import coach_conversation
 from jacbotcoach.bot.conversations import goals_conversation
 from jacbotcoach.bot.handlers import (
     approve_command,
+    deliverables_command,
     done_command,
+    done_d_command,
+    obstacle_command,
     build_command,
     builds_command,
     draft_command,
@@ -176,6 +179,11 @@ def main_sync() -> None:
     # Accountability Scoring
     app.add_handler(CommandHandler("score", score_command))
     app.add_handler(CommandHandler("scores", scores_command))
+
+    # Daily Check-Ins
+    app.add_handler(CommandHandler("deliverables", deliverables_command))
+    app.add_handler(CommandHandler("done_d", done_d_command))
+    app.add_handler(CommandHandler("obstacle", obstacle_command))
 
     # Inline keyboard callbacks
     app.add_handler(CallbackQueryHandler(goal_callback, pattern=r"^goal:"))

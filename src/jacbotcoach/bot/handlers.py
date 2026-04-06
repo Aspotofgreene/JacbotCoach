@@ -10,6 +10,7 @@ from telegram.ext import ContextTypes
 from jacbotcoach.config import get_settings
 from jacbotcoach.storage.accountability import AccountabilityStore
 from jacbotcoach.storage.autonomous import AutonomousStore
+from jacbotcoach.storage.checkins import CheckinStore
 from jacbotcoach.storage.focus import FocusStore
 from jacbotcoach.storage.milestones import MilestoneStore
 from jacbotcoach.storage.streaks import StreakStore
@@ -88,7 +89,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Accountability:\n"
         "  /score             — view this week's accountability score (1-10)\n"
         "  /scores            — view score history across all tracked weeks\n\n"
-        "Tip: You can also just type naturally, e.g. 'mark Learn Spanish as done'."
+        "Daily Check-Ins:\n"
+        "  /deliverables      — view today's 3 deliverables and progress\n"
+        "  /done_d <n>        — mark deliverable n (1-3) as complete\n"
+        "  /obstacle <n> <text> — report an obstacle and get immediate advice\n\n"
+        "Tip: Send your top 3 deliverables each morning (e.g. '1. Finish Ch1 by 11 AM') "
+        "and the bot will check in at 10 AM, 1 PM, 4 PM, and wrap up at 9 PM."
     )
 
 
@@ -1066,6 +1072,96 @@ async def scores_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text("\n".join(lines))
 
 
+async def deliverables_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show today's deliverables and their completion status."""
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    store = CheckinStore(settings.checkins_path)
+    await update.message.reply_text(store.summary_text())
+
+
+async def done_d_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /done_d <n> — mark deliverable n (1-3) as complete.
+    """
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    args = (context.args or [])
+    if not args or not args[0].isdigit():
+        await update.message.reply_text("Usage: /done_d <1|2|3>")
+        return
+    n = int(args[0])
+    if n < 1 or n > 3:
+        await update.message.reply_text("Deliverable number must be 1, 2, or 3.")
+        return
+    store = CheckinStore(settings.checkins_path)
+    if not store.has_today():
+        await update.message.reply_text("No deliverables set for today. Send your top 3 to get started!")
+        return
+    if store.mark_done(n):
+        await update.message.reply_text(
+            f"✅ Deliverable {n} marked complete!\n\n{store.summary_text()}"
+        )
+    else:
+        await update.message.reply_text(f"Deliverable {n} not found. Use /deliverables to check.")
+
+
+async def obstacle_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /obstacle <n> <text> — report an obstacle on deliverable n and get immediate advice.
+    """
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    args_raw = " ".join(context.args or "").strip()
+    if not args_raw or not args_raw[0].isdigit():
+        await update.message.reply_text("Usage: /obstacle <1|2|3> <description of obstacle>")
+        return
+
+    parts = args_raw.split(None, 1)
+    n = int(parts[0])
+    obstacle_text = parts[1].strip() if len(parts) > 1 else ""
+    if not obstacle_text:
+        await update.message.reply_text("Please describe the obstacle after the deliverable number.")
+        return
+    if n < 1 or n > 3:
+        await update.message.reply_text("Deliverable number must be 1, 2, or 3.")
+        return
+
+    store = CheckinStore(settings.checkins_path)
+    if not store.has_today():
+        await update.message.reply_text("No deliverables set for today.")
+        return
+
+    deliverables = store.get_today()
+    target = next((d for d in deliverables if d["id"] == n), None)
+    if not target:
+        await update.message.reply_text(f"Deliverable {n} not found. Use /deliverables to check.")
+        return
+
+    store.add_note(n, f"Obstacle: {obstacle_text}")
+    await update.message.reply_text("Got it — analyzing the obstacle, one moment...")
+
+    try:
+        from jacbotcoach.llm.router import LLMRouter
+        advice = await LLMRouter().obstacle_advice(target["text"], obstacle_text)
+    except Exception as e:
+        logger.error("obstacle_advice LLM failed: %s", e)
+        await update.message.reply_text(
+            f"Obstacle logged for deliverable {n}. "
+            "LLM advice unavailable right now — try /coach for a coaching conversation."
+        )
+        return
+
+    await update.message.reply_text(
+        f"🚧 *Obstacle on #{n}: {target['text']}*\n\n"
+        f"💡 *Suggestions:*\n{advice.strip()}",
+        parse_mode="Markdown",
+    )
+
+
 async def nl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Natural language fallback — handles plain text messages not caught by
@@ -1078,6 +1174,30 @@ async def nl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     settings = get_settings()
+
+    # ── Heuristic: morning deliverables list ────────────────────────────
+    # Detect numbered list patterns like "1. X\n2. Y\n3. Z" before calling LLM.
+    numbered = re.findall(r"^\s*[1-3][.)]\s+.+", message, re.MULTILINE)
+    if len(numbered) >= 2:
+        try:
+            from jacbotcoach.llm.router import LLMRouter
+            parsed = await LLMRouter().parse_deliverables(message)
+        except Exception as e:
+            logger.error("parse_deliverables failed: %s", e)
+            parsed = [line.strip().lstrip("123.) ") for line in numbered[:3]]
+
+        if parsed:
+            checkin_store = CheckinStore(settings.checkins_path)
+            checkin_store.set_deliverables(parsed)
+            lines = [f"{i+1}. {t}" for i, t in enumerate(parsed)]
+            await update.message.reply_text(
+                "📋 Got your deliverables for today!\n\n"
+                + "\n".join(lines)
+                + "\n\nI'll check in at 10 AM, 1 PM, and 4 PM, then wrap up at 9 PM. "
+                "Use /done_d <n> to mark one complete or /obstacle <n> <text> if you're stuck."
+            )
+            return
+
     store = AutonomousStore(settings.autonomous_md_path)
     goals = store.read() if not store.is_empty() else ""
 
@@ -1136,6 +1256,57 @@ async def nl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     elif action == "coach":
         await update.message.reply_text("Starting coaching mode — use /coach to begin.")
+
+    elif action == "deliverable_done":
+        checkin_store = CheckinStore(settings.checkins_path)
+        n_str = args.strip()
+        if n_str.isdigit() and checkin_store.has_today():
+            n = int(n_str)
+            if checkin_store.mark_done(n):
+                await update.message.reply_text(
+                    f"✅ Deliverable {n} marked complete!\n\n{checkin_store.summary_text()}"
+                )
+            else:
+                await update.message.reply_text(f"Deliverable {n} not found. Use /deliverables to check.")
+        else:
+            await update.message.reply_text(
+                "Which deliverable? Use /done_d <1|2|3> or check /deliverables."
+            )
+
+    elif action == "deliverable_obstacle":
+        checkin_store = CheckinStore(settings.checkins_path)
+        if "|" in args:
+            n_str, obstacle_text = args.split("|", 1)
+            n_str = n_str.strip()
+            obstacle_text = obstacle_text.strip()
+        else:
+            n_str, obstacle_text = args.strip(), message
+        if n_str.isdigit() and checkin_store.has_today():
+            n = int(n_str)
+            deliverables = checkin_store.get_today()
+            target = next((d for d in deliverables if d["id"] == n), None)
+            if target:
+                checkin_store.add_note(n, f"Obstacle: {obstacle_text}")
+                await update.message.reply_text("Noted — looking for ways to unblock you...")
+                try:
+                    from jacbotcoach.llm.router import LLMRouter
+                    advice = await LLMRouter().obstacle_advice(target["text"], obstacle_text)
+                    await update.message.reply_text(
+                        f"🚧 *Stuck on #{n}: {target['text']}*\n\n"
+                        f"💡 *Suggestions:*\n{advice.strip()}",
+                        parse_mode="Markdown",
+                    )
+                except Exception as e:
+                    logger.error("obstacle_advice failed: %s", e)
+                    await update.message.reply_text(
+                        "Obstacle logged. Use /coach for a deeper conversation."
+                    )
+            else:
+                await update.message.reply_text(f"Deliverable {n} not found. Use /deliverables.")
+        else:
+            await update.message.reply_text(
+                "Use /obstacle <1|2|3> <description> to report an obstacle on a specific deliverable."
+            )
 
     elif action == "unknown":
         await update.message.reply_text(

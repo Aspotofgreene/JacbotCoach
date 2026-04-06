@@ -20,6 +20,7 @@ from jacbotcoach.storage.research_queue import ResearchQueue
 from jacbotcoach.storage.tasks_log import TasksLog
 from jacbotcoach.storage.accountability import AccountabilityStore
 from jacbotcoach.storage.weekly_plan import WeeklyPlanStore
+from jacbotcoach.storage.checkins import CheckinStore
 
 logger = logging.getLogger(__name__)
 
@@ -749,6 +750,80 @@ async def run_accountability_scoring_job(application: Application) -> None:
     )
 
 
+async def run_checkin_job(application: Application, time_label: str) -> None:
+    """
+    Proactive mid-day check-in: shows deliverable status and asks for a progress update.
+    Runs at 10 AM, 1 PM, and 4 PM.
+    """
+    settings = get_settings()
+    store = CheckinStore(settings.checkins_path)
+
+    if not store.has_today():
+        return  # User hasn't set deliverables — nothing to check in on
+
+    summary = store.summary_text()
+    try:
+        nudge = await LLMRouter().checkin_nudge(summary, time_label)
+    except Exception as e:
+        logger.warning("checkin_nudge LLM failed (%s) — using fallback", e)
+        nudge = f"Quick check-in! How are your deliverables going?"
+
+    text = f"⏰ *{time_label} Check-In*\n\n{summary}\n\n{nudge.strip()}\n\nReply with progress, obstacles, or '/done_d <n>' to mark one complete."
+    await application.bot.send_message(
+        chat_id=settings.telegram_allowed_user_id,
+        text=text,
+        parse_mode="Markdown",
+    )
+
+
+async def run_checkin_morning_job(application: Application) -> None:
+    await run_checkin_job(application, "10:00 AM")
+
+
+async def run_checkin_midday_job(application: Application) -> None:
+    await run_checkin_job(application, "1:00 PM")
+
+
+async def run_checkin_afternoon_job(application: Application) -> None:
+    await run_checkin_job(application, "4:00 PM")
+
+
+async def run_evening_checkin_job(application: Application) -> None:
+    """
+    9 PM end-of-day wrap-up: summarizes what was done, what was missed,
+    and gives a concrete suggestion for tomorrow.
+    """
+    settings = get_settings()
+    store = CheckinStore(settings.checkins_path)
+
+    if not store.has_today():
+        return  # No deliverables set today
+
+    deliverables = store.get_today()
+    done_count = sum(1 for d in deliverables if d["done"])
+
+    try:
+        summary = await LLMRouter().evening_deliverable_summary(deliverables)
+    except Exception as e:
+        logger.warning("evening_deliverable_summary LLM failed (%s) — using fallback", e)
+        missed = [d for d in deliverables if not d["done"]]
+        summary = (
+            f"You completed {done_count}/{len(deliverables)} deliverables today."
+            + (f" Still open: {', '.join(d['text'] for d in missed)}." if missed else " Great work!")
+        )
+
+    text = (
+        f"🌙 *End-of-Day Wrap-Up*\n\n"
+        f"{store.summary_text()}\n\n"
+        f"📋 *Coach's Take:*\n{summary.strip()}"
+    )
+    await application.bot.send_message(
+        chat_id=settings.telegram_allowed_user_id,
+        text=text,
+        parse_mode="Markdown",
+    )
+
+
 def build_scheduler(application: Application) -> AsyncIOScheduler:
     settings = get_settings()
     tz = pytz.timezone(settings.timezone)
@@ -852,11 +927,48 @@ def build_scheduler(application: Application) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Daily check-in jobs (day runs 6 AM – 9 PM)
+    scheduler.add_job(
+        run_checkin_morning_job,
+        trigger=CronTrigger(hour=settings.checkin_morning_hour, minute=0, timezone=tz),
+        args=[application],
+        id="checkin_morning",
+        name="Morning Check-In (10 AM)",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        run_checkin_midday_job,
+        trigger=CronTrigger(hour=settings.checkin_midday_hour, minute=0, timezone=tz),
+        args=[application],
+        id="checkin_midday",
+        name="Midday Check-In (1 PM)",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        run_checkin_afternoon_job,
+        trigger=CronTrigger(hour=settings.checkin_afternoon_hour, minute=0, timezone=tz),
+        args=[application],
+        id="checkin_afternoon",
+        name="Afternoon Check-In (4 PM)",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        run_evening_checkin_job,
+        trigger=CronTrigger(hour=settings.checkin_evening_hour, minute=0, timezone=tz),
+        args=[application],
+        id="checkin_evening",
+        name="Evening Wrap-Up (9 PM)",
+        replace_existing=True,
+    )
+
     logger.info(
         "Scheduler: brief %02d:00, tasks %02d:%02d, reflection %02d:00, "
         "stall Mon 07:00, summary Sun 09:00, planning Sun %02d:00, "
         "accountability Sun %02d:00, research 00:00, drafting 01:00, "
-        "project builder %02d:00 (%s)",
+        "project builder %02d:00, check-ins %02d:00/%02d:00/%02d:00, wrap-up %02d:00 (%s)",
         settings.morning_brief_hour,
         settings.daily_task_hour,
         settings.daily_task_minute,
@@ -864,6 +976,10 @@ def build_scheduler(application: Application) -> AsyncIOScheduler:
         settings.weekly_planning_hour,
         settings.accountability_scoring_hour,
         settings.project_builder_hour,
+        settings.checkin_morning_hour,
+        settings.checkin_midday_hour,
+        settings.checkin_afternoon_hour,
+        settings.checkin_evening_hour,
         settings.timezone,
     )
     return scheduler
