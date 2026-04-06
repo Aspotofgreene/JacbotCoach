@@ -140,10 +140,21 @@ class OpenClawClient:
                 proc.communicate(), timeout=10.0
             )
             raw = stdout.decode(errors="replace").strip()
+            err_raw = stderr.decode(errors="replace").strip()
+            combined = (raw + "\n" + err_raw).lower()
+
+            # Detect known fatal errors regardless of exit code (openclaw
+            # sometimes exits 0 even on auth/pairing failures)
+            for fatal in ("pairing required", "gateway closed", "unauthorized", "not authenticated"):
+                if fatal in combined:
+                    raise RuntimeError(
+                        f"openclaw agent auth error ({fatal!r}). "
+                        "Run 'openclaw pair' or re-authorize via the OpenClaw app."
+                    )
+
             if proc.returncode != 0:
-                err = stderr.decode(errors="replace").strip()
                 raise RuntimeError(
-                    f"openclaw agent failed (exit {proc.returncode}): {err or raw}"
+                    f"openclaw agent failed (exit {proc.returncode}): {err_raw or raw}"
                 )
             session_id = _extract_session_id(raw) or _slugify(label) or f"task-{datetime.now().strftime('%H%M%S')}"
             logger.info("OpenClaw session completed quickly: %s", session_id)
