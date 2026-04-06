@@ -123,36 +123,76 @@ class OpenClawClient:
         cmd = self._build_agent_cmd(prompt, thinking)
         logger.info("Spawning OpenClaw agent: label=%r thinking=%s", label, thinking)
 
+        # Pass gateway token via env vars so the CLI can authenticate.
+        # OpenClaw CLI may check any of these depending on version.
+        import os as _os
+        spawn_env = _os.environ.copy()
+        if self._token:
+            for env_key in ("OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_TOKEN", "OPENCLAW_AUTH_TOKEN"):
+                spawn_env[env_key] = self._token
+
+        # First, try a quick launch to grab the session ID from JSON output.
+        # We wait up to 10s. If OpenClaw responds quickly (short tasks or
+        # immediate acknowledgement), great. Otherwise we re-launch with
+        # DEVNULL pipes so the long-running process isn't killed by a broken
+        # pipe when Python GCs the proc handle.
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=working_dir,
+            env=spawn_env,
         )
 
-        # Wait up to 10s for the gateway to acknowledge the task and return
-        # a session ID. openclaw agent --json returns structured output.
-        # If it takes longer than 10s, we detach and track by PID.
         try:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=10.0
             )
             raw = stdout.decode(errors="replace").strip()
+            err_raw = stderr.decode(errors="replace").strip()
+            combined = (raw + "\n" + err_raw).lower()
+
+            # Detect known fatal errors regardless of exit code (openclaw
+            # sometimes exits 0 even on auth/pairing failures)
+            for fatal in ("pairing required", "gateway closed", "unauthorized", "not authenticated"):
+                if fatal in combined:
+                    raise RuntimeError(
+                        f"openclaw agent auth error ({fatal!r}). "
+                        "Run 'openclaw pair' or re-authorize via the OpenClaw app."
+                    )
+
             if proc.returncode != 0:
-                err = stderr.decode(errors="replace").strip()
                 raise RuntimeError(
-                    f"openclaw agent failed (exit {proc.returncode}): {err or raw}"
+                    f"openclaw agent failed (exit {proc.returncode}): {err_raw or raw}"
                 )
-            # Parse session ID from JSON output
             session_id = _extract_session_id(raw) or _slugify(label) or f"task-{datetime.now().strftime('%H%M%S')}"
-            logger.info("OpenClaw session started: %s", session_id)
+            logger.info("OpenClaw session completed quickly: %s", session_id)
             return SessionResult(session_id=session_id, status="running", output=raw)
 
         except asyncio.TimeoutError:
-            # Still running — this is normal for long tasks
-            session_id = _slugify(label) or f"pid-{proc.pid}"
-            logger.info("OpenClaw agent running in background (pid=%d, id=%s)", proc.pid, session_id)
-            return SessionResult(session_id=session_id, status="running", output=f"pid={proc.pid}")
+            # Task is still running. Kill the pipe-connected proc and re-spawn
+            # with DEVNULL so the subprocess won't get SIGPIPE when Python
+            # closes its end of the pipes after this function returns.
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+
+            bg_proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                cwd=working_dir,
+                env=spawn_env,
+            )
+            session_id = _slugify(label) or f"pid-{bg_proc.pid}"
+            logger.info(
+                "OpenClaw agent running in background (pid=%d, id=%s)",
+                bg_proc.pid,
+                session_id,
+            )
+            return SessionResult(session_id=session_id, status="running", output=f"pid={bg_proc.pid}")
 
     def _build_agent_cmd(self, prompt: str, thinking: str = "high", agent: str = "main") -> list[str]:
         """Build the confirmed `openclaw agent` command."""

@@ -80,7 +80,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "  /research <topic>  — queue a topic for overnight OpenClaw research\n"
         "  /research_list     — view queue and ready reports\n\n"
         "Drafts:\n"
-        "  /draft <topic>     — queue overnight first-draft writing (supports book goal)\n"
+        "  /draft <topic>     — queue a first-draft writing session\n"
+        "  /draft_trigger     — run drafting job now (don't wait for 1 AM)\n"
+        "  /draft_retry       — reset stuck drafts and re-run them now\n"
         "  /drafts            — view draft queue and completed drafts\n\n"
         "Builds:\n"
         "  /build <idea>      — queue overnight prototype scaffolding by OpenClaw\n"
@@ -844,7 +846,7 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def draft_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/draft <topic or chapter> — queue an overnight first-draft writing session."""
+    """/draft <topic or chapter> — queue a first-draft writing session and run it now."""
     if not _is_allowed(update):
         return
     topic = " ".join(context.args) if context.args else ""
@@ -866,7 +868,7 @@ async def draft_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(
         f"✍️ Draft queued: {topic}\n\n"
         f"Queue depth: {count} draft(s). "
-        "The draft will be written overnight and listed in your morning briefing."
+        "Use /draft_trigger to start writing now, or it will run automatically at 1 AM."
     )
 
 
@@ -913,6 +915,9 @@ async def drafts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         lines.append(f"🔄 In progress ({len(in_progress)}):")
         for item in in_progress:
             lines.append(f"  • {item['topic']}")
+            lines.append(f"    Expected: {item.get('output_path', '?')}")
+            lines.append(f"    Session: {item.get('session_id', '?')}")
+        lines.append("(If stuck: /draft <topic> again to re-queue, then /draft_trigger)")
         lines.append("")
 
     if failed:
@@ -1064,6 +1069,60 @@ async def scores_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         lines.append(f"\n{len(history)}-week average: {avg}/10")
 
     await update.message.reply_text("\n".join(lines))
+
+
+async def draft_trigger_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/draft_trigger — run the content drafting job now (don't wait for 1 AM)."""
+    if not _is_allowed(update):
+        return
+    await update.message.reply_text("Starting content drafting now...")
+    try:
+        from jacbotcoach.scheduler.jobs import run_content_drafting_job
+        await run_content_drafting_job(context.application)
+    except Exception as e:
+        await update.message.reply_text(f"Error during content drafting: {e}")
+
+
+async def draft_retry_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/draft_retry — reset a stuck spawned/failed draft back to pending, then trigger it."""
+    if not _is_allowed(update):
+        return
+    topic = " ".join(context.args) if context.args else ""
+    settings = get_settings()
+    from jacbotcoach.storage.draft_queue import DraftQueue
+    queue = DraftQueue(settings.draft_queue_path)
+
+    if topic:
+        # Reset the specific topic
+        reset = await queue.reset_to_pending(topic)
+        if not reset:
+            await update.message.reply_text(
+                f"No stuck draft found matching '{topic}'.\n"
+                "Use /drafts to see the queue."
+            )
+            return
+        await update.message.reply_text(f"Reset to pending: {topic}\nStarting now...")
+    else:
+        # Reset ALL spawned/failed items
+        all_items = queue.get_all()
+        stuck = [i for i in all_items if i["status"] in ("spawned", "failed")]
+        if not stuck:
+            await update.message.reply_text(
+                "No stuck drafts to reset.\n"
+                "Use /draft <topic> to queue a new one."
+            )
+            return
+        for item in stuck:
+            await queue.reset_to_pending(item["topic"])
+        await update.message.reply_text(
+            f"Reset {len(stuck)} draft(s) to pending. Starting now..."
+        )
+
+    try:
+        from jacbotcoach.scheduler.jobs import run_content_drafting_job
+        await run_content_drafting_job(context.application)
+    except Exception as e:
+        await update.message.reply_text(f"Error during content drafting: {e}")
 
 
 async def nl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
