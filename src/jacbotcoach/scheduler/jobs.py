@@ -8,6 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram.ext import Application
 
+from jacbotcoach.bot.formatting import fix_md
 from jacbotcoach.config import get_settings
 from jacbotcoach.llm.router import LLMRouter
 from jacbotcoach.openclaw.client import OpenClawClient
@@ -295,7 +296,7 @@ async def run_stall_detection_job(application: Application) -> None:
             nudge = await router.stall_nudge(goal, settings.stall_days)
             await application.bot.send_message(
                 chat_id=settings.telegram_allowed_user_id,
-                text=f"⚠️ Goal hasn't seen activity in {settings.stall_days} days:\n*{goal}*\n\n{nudge}",
+                text=f"⚠️ Goal hasn't seen activity in {settings.stall_days} days:\n*{goal}*\n\n{fix_md(nudge)}",
                 parse_mode="Markdown",
             )
         except Exception:
@@ -343,7 +344,8 @@ async def run_weekly_summary_job(application: Application) -> None:
     week_label = today.strftime("Week of %B %d")
     await application.bot.send_message(
         chat_id=settings.telegram_allowed_user_id,
-        text=f"📊 {week_label}\n\n{summary}",
+        text=f"📊 {week_label}\n\n{fix_md(summary)}",
+        parse_mode="Markdown",
     )
 
 
@@ -395,10 +397,11 @@ async def run_weekly_planning_job(application: Application) -> None:
         chat_id=settings.telegram_allowed_user_id,
         text=(
             "📅 Weekly Planning — proposed focus for next week:\n\n"
-            f"{proposal}\n\n"
+            f"{fix_md(proposal)}\n\n"
             "Reply /approve to set this as your weekly focus, "
             "or /focus <text> to write your own."
         ),
+        parse_mode="Markdown",
     )
 
 
@@ -736,12 +739,13 @@ async def run_accountability_scoring_job(application: Application) -> None:
         f"Focus Alignment {_bar(focus_alignment)} {focus_alignment}/10\n"
         f"Momentum        {_bar(momentum)} {momentum}/10\n\n"
         f"Overall: {overall}/10\n\n"
-        f"💬 {insight.strip()}"
+        f"💬 {fix_md(insight.strip())}"
     )
 
     await application.bot.send_message(
         chat_id=settings.telegram_allowed_user_id,
         text=text,
+        parse_mode="Markdown",
     )
 
 

@@ -15,6 +15,7 @@ from telegram.ext import (
     filters,
 )
 
+from jacbotcoach.bot.formatting import fix_md
 from jacbotcoach.config import get_settings
 from jacbotcoach.llm.router import LLMRouter
 from jacbotcoach.storage.autonomous import AutonomousStore
@@ -72,7 +73,7 @@ async def coach_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     # Keep history bounded to last 10 exchanges
     context.user_data["coach_history"] = history[-20:]
 
-    await update.message.reply_text(response)
+    await update.message.reply_text(fix_md(response), parse_mode="Markdown")
     return COACHING
 
 
