@@ -82,6 +82,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Drafts:\n"
         "  /draft <topic>     — queue a first-draft writing session\n"
         "  /draft_trigger     — run drafting job now (don't wait for 1 AM)\n"
+        "  /draft_retry       — reset stuck drafts and re-run them now\n"
         "  /drafts            — view draft queue and completed drafts\n\n"
         "Builds:\n"
         "  /build <idea>      — queue overnight prototype scaffolding by OpenClaw\n"
@@ -1075,6 +1076,48 @@ async def draft_trigger_command(update: Update, context: ContextTypes.DEFAULT_TY
     if not _is_allowed(update):
         return
     await update.message.reply_text("Starting content drafting now...")
+    try:
+        from jacbotcoach.scheduler.jobs import run_content_drafting_job
+        await run_content_drafting_job(context.application)
+    except Exception as e:
+        await update.message.reply_text(f"Error during content drafting: {e}")
+
+
+async def draft_retry_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/draft_retry — reset a stuck spawned/failed draft back to pending, then trigger it."""
+    if not _is_allowed(update):
+        return
+    topic = " ".join(context.args) if context.args else ""
+    settings = get_settings()
+    from jacbotcoach.storage.draft_queue import DraftQueue
+    queue = DraftQueue(settings.draft_queue_path)
+
+    if topic:
+        # Reset the specific topic
+        reset = await queue.reset_to_pending(topic)
+        if not reset:
+            await update.message.reply_text(
+                f"No stuck draft found matching '{topic}'.\n"
+                "Use /drafts to see the queue."
+            )
+            return
+        await update.message.reply_text(f"Reset to pending: {topic}\nStarting now...")
+    else:
+        # Reset ALL spawned/failed items
+        all_items = queue.get_all()
+        stuck = [i for i in all_items if i["status"] in ("spawned", "failed")]
+        if not stuck:
+            await update.message.reply_text(
+                "No stuck drafts to reset.\n"
+                "Use /draft <topic> to queue a new one."
+            )
+            return
+        for item in stuck:
+            await queue.reset_to_pending(item["topic"])
+        await update.message.reply_text(
+            f"Reset {len(stuck)} draft(s) to pending. Starting now..."
+        )
+
     try:
         from jacbotcoach.scheduler.jobs import run_content_drafting_job
         await run_content_drafting_job(context.application)
