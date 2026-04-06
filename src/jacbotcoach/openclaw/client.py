@@ -195,13 +195,16 @@ class OpenClawClient:
             return SessionResult(session_id=session_id, status="running", output=f"pid={bg_proc.pid}")
 
     def _build_agent_cmd(self, prompt: str, thinking: str = "high", agent: str = "main") -> list[str]:
-        """Build the confirmed `openclaw agent` command."""
+        """Build the confirmed `openclaw agent` command.
+        Note: --json is intentionally omitted. In embedded fallback mode
+        (when the gateway is unavailable), --json causes the process to
+        return structured output immediately without executing the task.
+        """
         return [
             self._bin, "agent",
             "--agent", agent,
             "--message", prompt,
             "--thinking", thinking,
-            "--json",
         ]
 
     # ------------------------------------------------------------------ #

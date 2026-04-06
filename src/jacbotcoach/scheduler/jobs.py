@@ -530,6 +530,7 @@ async def run_content_drafting_job(application: Application) -> None:
             result = await claw.create_session(
                 prompt=prompt,
                 label=f"draft-{slug}"[:80],
+                thinking="low",
             )
             await queue.mark_spawned(topic, result.session_id, str(output_path))
             spawned.append((topic, result.session_id, str(output_path)))
