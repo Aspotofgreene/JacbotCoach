@@ -447,18 +447,25 @@ async def run_research_job(application: Application) -> None:
             await queue.mark_failed(topic, err_str)
             failed.append((topic, err_str))
 
-    if written or failed:
-        lines = [f"🔬 {len(written)} research report(s) ready:\n"]
-        for topic, out in written:
-            lines.append(f"  • {topic[:80]}")
-            lines.append(f"    {out}")
-        if failed:
-            lines.append(f"\n⚠️ {len(failed)} failed:")
-            for topic, err in failed:
-                lines.append(f"  • {topic[:60]}: {err[:100]}")
+    for topic, out in written:
+        out_path = Path(out)
+        caption = f"🔬 Research ready: *{topic[:80]}*"
+        with out_path.open("rb") as fh:
+            await application.bot.send_document(
+                chat_id=settings.telegram_allowed_user_id,
+                document=fh,
+                filename=out_path.name,
+                caption=caption,
+                parse_mode="Markdown",
+            )
+
+    if failed:
+        fail_lines = [f"⚠️ {len(failed)} research topic(s) failed:"]
+        for topic, err in failed:
+            fail_lines.append(f"  • {topic[:60]}: {err[:100]}")
         await application.bot.send_message(
             chat_id=settings.telegram_allowed_user_id,
-            text="\n".join(lines),
+            text="\n".join(fail_lines),
         )
 
 
@@ -504,18 +511,25 @@ async def run_content_drafting_job(application: Application) -> None:
             await queue.mark_failed(topic, err_str)
             failed.append((topic, err_str))
 
-    if written or failed:
-        lines = [f"✍️ {len(written)} draft(s) ready:\n"]
-        for topic, out in written:
-            lines.append(f"  • {topic[:80]}")
-            lines.append(f"    {out}")
-        if failed:
-            lines.append(f"\n⚠️ {len(failed)} failed:")
-            for topic, err in failed:
-                lines.append(f"  • {topic[:60]}: {err[:100]}")
+    for topic, out in written:
+        out_path = Path(out)
+        caption = f"✍️ Draft ready: *{topic[:80]}*"
+        with out_path.open("rb") as fh:
+            await application.bot.send_document(
+                chat_id=settings.telegram_allowed_user_id,
+                document=fh,
+                filename=out_path.name,
+                caption=caption,
+                parse_mode="Markdown",
+            )
+
+    if failed:
+        fail_lines = [f"⚠️ {len(failed)} draft(s) failed:"]
+        for topic, err in failed:
+            fail_lines.append(f"  • {topic[:60]}: {err[:100]}")
         await application.bot.send_message(
             chat_id=settings.telegram_allowed_user_id,
-            text="\n".join(lines),
+            text="\n".join(fail_lines),
         )
 
 
