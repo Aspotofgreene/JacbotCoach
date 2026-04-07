@@ -35,6 +35,8 @@ from jacbotcoach.bot.handlers import (
     promote_idea_command,
     research_command,
     research_list_command,
+    research_retry_command,
+    research_trigger_command,
     score_command,
     scores_command,
     status_command,
@@ -166,6 +168,8 @@ def main_sync() -> None:
     # Research
     app.add_handler(CommandHandler("research", research_command))
     app.add_handler(CommandHandler("research_list", research_list_command))
+    app.add_handler(CommandHandler("research_trigger", research_trigger_command))
+    app.add_handler(CommandHandler("research_retry", research_retry_command))
 
     # Drafts
     app.add_handler(CommandHandler("draft", draft_command))

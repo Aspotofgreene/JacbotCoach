@@ -407,13 +407,14 @@ async def run_weekly_planning_job(application: Application) -> None:
 
 async def run_research_job(application: Application) -> None:
     """
-    Midnight job: for each pending topic in the research queue, spawn an
-    OpenClaw agent to research it and save a markdown summary to
-    research/<date>-<slug>.md.
+    Midnight job: generate research summaries directly via LLM and write to disk.
+    Uses the LLM router (desktop GPU) instead of OpenClaw — same reason as drafts:
+    OpenClaw can't reliably write long-form content to files.
     """
     settings = get_settings()
     queue = ResearchQueue(settings.research_queue_path)
-    claw = OpenClawClient(settings.openclaw_url, settings.openclaw_token)
+    router = LLMRouter()
+    log = TasksLog(settings.tasks_log_path)
 
     pending = queue.get_pending()
     if not pending:
@@ -424,7 +425,7 @@ async def run_research_job(application: Application) -> None:
     settings.research_dir.mkdir(parents=True, exist_ok=True)
     today_str = date.today().isoformat()
 
-    spawned = []
+    written = []
     failed = []
 
     for item in pending:
@@ -432,46 +433,29 @@ async def run_research_job(application: Application) -> None:
         slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:50]
         output_path = settings.research_dir / f"{today_str}-{slug}.md"
 
-        prompt = (
-            f"Research the following topic thoroughly and produce a detailed markdown summary.\n\n"
-            f"Topic: {topic}\n\n"
-            f"Your research should cover:\n"
-            f"- Overview and key concepts\n"
-            f"- Current state and recent developments\n"
-            f"- Key players, tools, or resources\n"
-            f"- Practical implications or actionable insights\n"
-            f"- Further reading recommendations\n\n"
-            f"Save your complete research summary as a markdown file at: {output_path}\n"
-            f"The file should start with a # heading and be well-structured with clear sections.\n\n"
-            f"When done, append a ✅ line to memory/tasks-log.md in exactly this format:\n"
-            f"- [{today_str}] [DONE] ✅ Research complete: {topic}\n\n"
-            f"Never edit AUTONOMOUS.md directly."
-        )
-
         try:
-            result = await claw.create_session(
-                prompt=prompt,
-                label=f"research-{slug}"[:80],
-            )
-            await queue.mark_spawned(topic, result.session_id, str(output_path))
-            spawned.append((topic, result.session_id, str(output_path)))
-            logger.info("Research spawned session %s for: %s", result.session_id, topic)
+            logger.info("Generating research via LLM for: %s", topic[:80])
+            content = await router.generate_research(topic)
+            output_path.write_text(content, encoding="utf-8")
+            await queue.mark_spawned(topic, "llm-direct", str(output_path))
+            await log.append(f"Research complete: {topic[:80]}", status="DONE")
+            written.append((topic, str(output_path)))
+            logger.info("Research written to %s", output_path)
         except Exception as e:
             err_str = str(e)
-            logger.error("Research spawn failed for '%s': %s", topic, err_str)
+            logger.error("Research failed for '%s': %s", topic, err_str)
             await queue.mark_failed(topic, err_str)
             failed.append((topic, err_str))
 
-    if spawned or failed:
-        lines = [f"🔬 Research job: {len(spawned)} topic(s) dispatched.\n"]
-        for topic, sid, out in spawned:
-            lines.append(f"  • {topic}")
-            lines.append(f"    Session: {sid}")
-            lines.append(f"    Output: {out}")
+    if written or failed:
+        lines = [f"🔬 {len(written)} research report(s) ready:\n"]
+        for topic, out in written:
+            lines.append(f"  • {topic[:80]}")
+            lines.append(f"    {out}")
         if failed:
-            lines.append(f"\n⚠️ {len(failed)} failed to spawn:")
+            lines.append(f"\n⚠️ {len(failed)} failed:")
             for topic, err in failed:
-                lines.append(f"  • {topic}: {err[:100]}")
+                lines.append(f"  • {topic[:60]}: {err[:100]}")
         await application.bot.send_message(
             chat_id=settings.telegram_allowed_user_id,
             text="\n".join(lines),

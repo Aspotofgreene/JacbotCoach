@@ -68,3 +68,19 @@ class ResearchQueue:
                     item["error"] = error[:200]
                     break
             self._save(items)
+
+    async def reset_to_pending(self, topic: str) -> bool:
+        """Reset a spawned/failed item back to pending so it will be retried.
+        Returns True if an item was found and reset."""
+        async with self._lock:
+            items = self._load()
+            for item in items:
+                if item["topic"].lower() == topic.lower() and item["status"] in ("spawned", "failed"):
+                    item["status"] = "pending"
+                    item.pop("session_id", None)
+                    item.pop("output_path", None)
+                    item.pop("spawned_at", None)
+                    item.pop("error", None)
+                    self._save(items)
+                    return True
+            return False

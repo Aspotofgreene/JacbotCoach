@@ -277,6 +277,27 @@ class LLMRouter:
         )
         return await client.generate(prompt, timeout=180.0)
 
+    async def generate_research(self, topic: str) -> str:
+        """
+        Heavy task: research a topic and produce a structured markdown summary.
+        Returns markdown text — the bot writes it to disk.
+        Runs on desktop GPU (with Mac mini fallback).
+        """
+        client = await self._client_with_fallback(Complexity.HEAVY)
+        prompt = (
+            "Write a detailed research summary on the following topic. "
+            "Output only the markdown content — no preamble, no explanation.\n\n"
+            f"Topic: {topic}\n\n"
+            "Cover:\n"
+            "- Overview and key concepts\n"
+            "- Current state and recent developments\n"
+            "- Key players, tools, or resources\n"
+            "- Practical implications and actionable insights\n"
+            "- Further reading recommendations\n\n"
+            "Start with a # heading. Use ## subheadings for each section."
+        )
+        return await client.generate(prompt, timeout=600.0)
+
     async def generate_draft(self, topic: str) -> str:
         """
         Heavy task: write a first-draft document directly.

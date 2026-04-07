@@ -77,7 +77,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "  /ideas             — list all captured ideas\n"
         "  /promote_idea <text> — move an idea to the Open Backlog\n\n"
         "Research:\n"
-        "  /research <topic>  — queue a topic for overnight OpenClaw research\n"
+        "  /research <topic>  — queue a topic for overnight research\n"
+        "  /research_trigger  — run research job now\n"
+        "  /research_retry    — reset stuck research and re-run now\n"
         "  /research_list     — view queue and ready reports\n\n"
         "Drafts:\n"
         "  /draft <topic>     — queue a first-draft writing session\n"
@@ -926,6 +928,45 @@ async def drafts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             lines.append(f"  • {item['topic']}: {item.get('error', 'unknown')[:80]}")
 
     await update.message.reply_text("\n".join(lines).strip())
+
+
+async def research_trigger_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/research_trigger — run the research job now (don't wait for midnight)."""
+    if not _is_allowed(update):
+        return
+    await update.message.reply_text("Starting research now...")
+    try:
+        from jacbotcoach.scheduler.jobs import run_research_job
+        await run_research_job(context.application)
+    except Exception as e:
+        await update.message.reply_text(f"Error during research: {e}")
+
+
+async def research_retry_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/research_retry — reset stuck spawned/failed research and re-run now."""
+    if not _is_allowed(update):
+        return
+    settings = get_settings()
+    from jacbotcoach.storage.research_queue import ResearchQueue
+    queue = ResearchQueue(settings.research_queue_path)
+    all_items = queue.get_all()
+    stuck = [i for i in all_items if i["status"] in ("spawned", "failed")]
+    if not stuck:
+        await update.message.reply_text(
+            "No stuck research to reset.\n"
+            "Use /research <topic> to queue a new one."
+        )
+        return
+    for item in stuck:
+        await queue.reset_to_pending(item["topic"])
+    await update.message.reply_text(
+        f"Reset {len(stuck)} research topic(s) to pending. Starting now..."
+    )
+    try:
+        from jacbotcoach.scheduler.jobs import run_research_job
+        await run_research_job(context.application)
+    except Exception as e:
+        await update.message.reply_text(f"Error during research: {e}")
 
 
 async def build_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
