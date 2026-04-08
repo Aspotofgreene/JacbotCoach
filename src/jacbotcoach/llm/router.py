@@ -286,7 +286,7 @@ class LLMRouter:
         client = await self._client_with_fallback(Complexity.HEAVY)
         prompt = (
             "Write a detailed research summary on the following topic. "
-            "Output only the markdown content — no preamble, no explanation.\n\n"
+            "Output only the content — no preamble, no explanation.\n\n"
             f"Topic: {topic}\n\n"
             "Cover:\n"
             "- Overview and key concepts\n"
@@ -294,7 +294,12 @@ class LLMRouter:
             "- Key players, tools, or resources\n"
             "- Practical implications and actionable insights\n"
             "- Further reading recommendations\n\n"
-            "Start with a # heading. Use ## subheadings for each section."
+            "Formatting rules:\n"
+            "- Start with a # heading for the title\n"
+            "- Use ## subheadings for each section\n"
+            "- Use plain bullet points with -\n"
+            "- Do NOT use **bold** or *italic* markdown — write in plain prose\n"
+            "- The output will be read as plain text so avoid any special formatting"
         )
         return await client.generate(prompt, timeout=600.0)
 
@@ -307,7 +312,7 @@ class LLMRouter:
         client = await self._client_with_fallback(Complexity.HEAVY)
         prompt = (
             "Write a first-draft document on the following topic. "
-            "Output only the markdown content — no preamble, no explanation.\n\n"
+            "Output only the content — no preamble, no explanation.\n\n"
             f"Topic: {topic}\n\n"
             "Format:\n"
             "- Start with a # title heading\n"
@@ -315,7 +320,9 @@ class LLMRouter:
             "- 3–5 sections with ## headings\n"
             "- Conclusion\n"
             "- Aim for 800–1200 words\n"
-            "- Use a thoughtful, literary tone"
+            "- Use a thoughtful, literary tone\n"
+            "- Do NOT use **bold** or *italic* markdown — write in plain prose\n"
+            "- The output will be read as plain text so avoid any special formatting"
         )
         return await client.generate(prompt, timeout=600.0)
 

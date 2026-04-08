@@ -81,40 +81,28 @@ async def run_morning_brief_job(application: Application) -> None:
             clean = re.sub(r"^\s*-\s*\[\d{4}-\d{2}-\d{2}\]\s*\[\w+\]\s*[✅📝🔄]?\s*", "", entry)
             lines.append(f"  • {clean.strip()}")
 
-    # Ready research reports (spawned topics whose output file now exists)
+    # Ready research reports (completed overnight)
     research_queue = ResearchQueue(settings.research_queue_path)
-    ready_reports = [
-        i for i in research_queue.get_all()
-        if i.get("status") == "spawned" and Path(i.get("output_path", "")).exists()
-    ]
+    ready_reports = [i for i in research_queue.get_all() if i.get("status") == "done"]
     if ready_reports:
         lines.append(f"\n🔬 Research ready ({len(ready_reports)}):")
         for item in ready_reports:
             lines.append(f"  • {item['topic']}")
-            lines.append(f"    {item['output_path']}")
 
-    # Warn about research that was spawned overnight but produced no output
-    stale_reports = [
-        i for i in research_queue.get_all()
-        if i.get("status") == "spawned" and not Path(i.get("output_path", "")).exists()
-    ]
-    if stale_reports:
-        lines.append(f"\n⚠️ Research incomplete — OpenClaw may have failed ({len(stale_reports)}):")
-        for item in stale_reports:
+    # Warn about research that failed
+    failed_reports = [i for i in research_queue.get_all() if i.get("status") == "failed"]
+    if failed_reports:
+        lines.append(f"\n⚠️ Research failed ({len(failed_reports)}) — use /research_retry:")
+        for item in failed_reports:
             lines.append(f"  • {item['topic']}")
-        lines.append("  Use /research_list for details.")
 
-    # Ready drafts (spawned drafts whose output file now exists)
+    # Ready drafts (completed overnight)
     draft_queue = DraftQueue(settings.draft_queue_path)
-    ready_drafts = [
-        i for i in draft_queue.get_all()
-        if i.get("status") == "spawned" and Path(i.get("output_path", "")).exists()
-    ]
+    ready_drafts = [i for i in draft_queue.get_all() if i.get("status") == "done"]
     if ready_drafts:
         lines.append(f"\n✍️ Drafts ready ({len(ready_drafts)}):")
         for item in ready_drafts:
             lines.append(f"  • {item['topic']}")
-            lines.append(f"    {item['output_path']}")
 
     # Ready project builds (spawned builds whose output dir now exists)
     project_queue = ProjectQueue(settings.project_queue_path)
