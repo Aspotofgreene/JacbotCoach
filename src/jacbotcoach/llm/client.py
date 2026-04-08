@@ -6,6 +6,11 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+def _strip_thinking(text: str) -> str:
+    """Remove <think>...</think> blocks that qwen3 and similar models emit."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
 class OllamaClient:
     """HTTP client for a single Ollama instance."""
 
@@ -20,7 +25,7 @@ class OllamaClient:
                 json={"model": self.model, "prompt": prompt, "stream": False},
             )
             resp.raise_for_status()
-            return resp.json()["response"]
+            return _strip_thinking(resp.json()["response"])
 
     async def health_check(self) -> bool:
         try:
