@@ -27,15 +27,15 @@ class ResearchQueue:
         """Add a topic to the queue.
 
         Returns (queue_length, already_done) where already_done=True means
-        this topic was already completed. Silently skips if already pending.
+        this topic was already completed. Silently skips if already pending or in-progress.
         """
         async with self._lock:
             items = self._load()
-            already_pending = any(
-                i["topic"].lower() == topic.lower() and i["status"] == "pending"
+            already_active = any(
+                i["topic"].lower() == topic.lower() and i["status"] in ("pending", "spawned")
                 for i in items
             )
-            if already_pending:
+            if already_active:
                 return len(items), False
             already_done = any(
                 i["topic"].lower() == topic.lower() and i["status"] == "done"
@@ -80,16 +80,18 @@ class ResearchQueue:
             self._save(items)
 
     async def reset_to_pending(self, topic: str) -> bool:
-        """Reset a failed or done item back to pending so it will be re-run.
+        """Reset a failed, stuck, or done item back to pending so it will be re-run.
         Returns True if an item was found and reset."""
         async with self._lock:
             items = self._load()
             for item in items:
-                if item["topic"].lower() == topic.lower() and item["status"] in ("failed", "done"):
+                if item["topic"].lower() == topic.lower() and item["status"] in ("failed", "done", "spawned"):
                     item["status"] = "pending"
                     item.pop("error", None)
                     item.pop("output_path", None)
                     item.pop("done_at", None)
+                    item.pop("session_id", None)
+                    item.pop("spawned_at", None)
                     self._save(items)
                     return True
             return False
