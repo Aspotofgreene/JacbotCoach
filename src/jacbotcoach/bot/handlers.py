@@ -702,18 +702,17 @@ async def research_list_command(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     pending = [i for i in all_items if i["status"] == "pending"]
+    done = [i for i in all_items if i["status"] == "done"]
+    # legacy: items marked "spawned" by old code
     spawned = [i for i in all_items if i["status"] == "spawned"]
     failed = [i for i in all_items if i["status"] == "failed"]
-    ready = [i for i in spawned if (settings.research_dir / i.get("output_path", "NONE")).exists()
-             or Path(i.get("output_path", "NONE")).exists()]
 
     lines = ["Research queue:\n"]
 
-    if ready:
-        lines.append(f"✅ Ready reports ({len(ready)}):")
-        for item in ready:
-            lines.append(f"  • {item['topic']}")
-            lines.append(f"    {item['output_path']}")
+    if done:
+        lines.append(f"✅ Completed ({len(done)}):")
+        for item in done:
+            lines.append(f"  • {item['topic']} (done {item.get('done_at', '?')})")
         lines.append("")
 
     if pending:
@@ -722,10 +721,9 @@ async def research_list_command(update: Update, context: ContextTypes.DEFAULT_TY
             lines.append(f"  • {item['topic']} (queued {item['queued_at']})")
         lines.append("")
 
-    in_progress = [i for i in spawned if i not in ready]
-    if in_progress:
-        lines.append(f"🔄 In progress ({len(in_progress)}):")
-        for item in in_progress:
+    if spawned:
+        lines.append(f"🔄 Stuck/in-progress ({len(spawned)}) — use /research_retry:")
+        for item in spawned:
             lines.append(f"  • {item['topic']}")
         lines.append("")
 
@@ -902,20 +900,17 @@ async def drafts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     pending = [i for i in all_items if i["status"] == "pending"]
+    done = [i for i in all_items if i["status"] == "done"]
+    # legacy: items marked "spawned" by old code
     spawned = [i for i in all_items if i["status"] == "spawned"]
     failed = [i for i in all_items if i["status"] == "failed"]
-    ready = [
-        i for i in spawned
-        if Path(i.get("output_path", "NONE")).exists()
-    ]
 
     lines = ["Draft queue:\n"]
 
-    if ready:
-        lines.append(f"✅ Ready drafts ({len(ready)}):")
-        for item in ready:
-            lines.append(f"  • {item['topic']}")
-            lines.append(f"    {item['output_path']}")
+    if done:
+        lines.append(f"✅ Completed ({len(done)}):")
+        for item in done:
+            lines.append(f"  • {item['topic']} (done {item.get('done_at', '?')})")
         lines.append("")
 
     if pending:
@@ -924,14 +919,10 @@ async def drafts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             lines.append(f"  • {item['topic']} (queued {item['queued_at']})")
         lines.append("")
 
-    in_progress = [i for i in spawned if i not in ready]
-    if in_progress:
-        lines.append(f"🔄 In progress ({len(in_progress)}):")
-        for item in in_progress:
+    if spawned:
+        lines.append(f"🔄 Stuck/in-progress ({len(spawned)}) — use /draft_retry:")
+        for item in spawned:
             lines.append(f"  • {item['topic']}")
-            lines.append(f"    Expected: {item.get('output_path', '?')}")
-            lines.append(f"    Session: {item.get('session_id', '?')}")
-        lines.append("(If stuck: /draft <topic> again to re-queue, then /draft_trigger)")
         lines.append("")
 
     if failed:
@@ -966,7 +957,7 @@ async def research_retry_command(update: Update, context: ContextTypes.DEFAULT_T
 
     if topic:
         match = next(
-            (i for i in all_items if i["topic"].lower() == topic.lower() and i["status"] in ("failed", "done")),
+            (i for i in all_items if i["topic"].lower() == topic.lower() and i["status"] in ("failed", "done", "spawned")),
             None,
         )
         if not match:
@@ -978,17 +969,17 @@ async def research_retry_command(update: Update, context: ContextTypes.DEFAULT_T
         await queue.reset_to_pending(match["topic"])
         await update.message.reply_text(f"Reset to pending: {match['topic']}\nStarting now...")
     else:
-        failed = [i for i in all_items if i["status"] == "failed"]
-        if not failed:
+        retryable = [i for i in all_items if i["status"] in ("failed", "spawned")]
+        if not retryable:
             await update.message.reply_text(
-                "No failed research to retry.\n"
+                "No failed or stuck research to retry.\n"
                 "To re-run a completed topic use /research_retry <topic>."
             )
             return
-        for item in failed:
+        for item in retryable:
             await queue.reset_to_pending(item["topic"])
         await update.message.reply_text(
-            f"Reset {len(failed)} failed research topic(s) to pending. Starting now..."
+            f"Reset {len(retryable)} research topic(s) to pending. Starting now..."
         )
     try:
         from jacbotcoach.scheduler.jobs import run_research_job
@@ -1172,17 +1163,17 @@ async def draft_retry_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"Reset to pending: {topic}\nStarting now...")
     else:
         all_items = queue.get_all()
-        failed = [i for i in all_items if i["status"] == "failed"]
-        if not failed:
+        retryable = [i for i in all_items if i["status"] in ("failed", "spawned")]
+        if not retryable:
             await update.message.reply_text(
-                "No failed drafts to retry.\n"
+                "No failed or stuck drafts to retry.\n"
                 "To re-run a completed draft use /draft_retry <topic>."
             )
             return
-        for item in failed:
+        for item in retryable:
             await queue.reset_to_pending(item["topic"])
         await update.message.reply_text(
-            f"Reset {len(failed)} failed draft(s) to pending. Starting now..."
+            f"Reset {len(retryable)} failed/stuck draft(s) to pending. Starting now..."
         )
 
     try:
