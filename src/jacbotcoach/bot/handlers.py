@@ -673,7 +673,13 @@ async def research_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     settings = get_settings()
     from jacbotcoach.storage.research_queue import ResearchQueue
     queue = ResearchQueue(settings.research_queue_path)
-    count = await queue.enqueue(topic)
+    count, already_done = await queue.enqueue(topic)
+    if already_done:
+        await update.message.reply_text(
+            f"🔬 '{topic}' was already researched.\n\n"
+            "Use /research_retry to re-run it, or check /research_list for the saved report."
+        )
+        return
     await update.message.reply_text(
         f"🔬 Research queued: {topic}\n\n"
         f"Queue depth: {count} topic(s). Results will appear in your morning briefing."
@@ -866,7 +872,13 @@ async def draft_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     settings = get_settings()
     from jacbotcoach.storage.draft_queue import DraftQueue
     queue = DraftQueue(settings.draft_queue_path)
-    count = await queue.enqueue(topic)
+    count, already_done = await queue.enqueue(topic)
+    if already_done:
+        await update.message.reply_text(
+            f"✍️ '{topic}' was already drafted.\n\n"
+            "Use /draft_retry to re-run it, or check /drafts for the saved file."
+        )
+        return
     await update.message.reply_text(
         f"✍️ Draft queued: {topic}\n\n"
         f"Queue depth: {count} draft(s). "
@@ -943,25 +955,41 @@ async def research_trigger_command(update: Update, context: ContextTypes.DEFAULT
 
 
 async def research_retry_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/research_retry — reset stuck spawned/failed research and re-run now."""
+    """/research_retry [topic] — re-run a failed or already-completed research topic."""
     if not _is_allowed(update):
         return
+    topic = " ".join(context.args) if context.args else ""
     settings = get_settings()
     from jacbotcoach.storage.research_queue import ResearchQueue
     queue = ResearchQueue(settings.research_queue_path)
     all_items = queue.get_all()
-    stuck = [i for i in all_items if i["status"] in ("spawned", "failed")]
-    if not stuck:
-        await update.message.reply_text(
-            "No stuck research to reset.\n"
-            "Use /research <topic> to queue a new one."
+
+    if topic:
+        match = next(
+            (i for i in all_items if i["topic"].lower() == topic.lower() and i["status"] in ("failed", "done")),
+            None,
         )
-        return
-    for item in stuck:
-        await queue.reset_to_pending(item["topic"])
-    await update.message.reply_text(
-        f"Reset {len(stuck)} research topic(s) to pending. Starting now..."
-    )
+        if not match:
+            await update.message.reply_text(
+                f"No completed or failed research found matching '{topic}'.\n"
+                "Use /research_list to see the queue."
+            )
+            return
+        await queue.reset_to_pending(match["topic"])
+        await update.message.reply_text(f"Reset to pending: {match['topic']}\nStarting now...")
+    else:
+        failed = [i for i in all_items if i["status"] == "failed"]
+        if not failed:
+            await update.message.reply_text(
+                "No failed research to retry.\n"
+                "To re-run a completed topic use /research_retry <topic>."
+            )
+            return
+        for item in failed:
+            await queue.reset_to_pending(item["topic"])
+        await update.message.reply_text(
+            f"Reset {len(failed)} failed research topic(s) to pending. Starting now..."
+        )
     try:
         from jacbotcoach.scheduler.jobs import run_research_job
         await run_research_job(context.application)
@@ -1125,7 +1153,7 @@ async def draft_trigger_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def draft_retry_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/draft_retry — reset a stuck spawned/failed draft back to pending, then trigger it."""
+    """/draft_retry [topic] — re-run a failed or already-completed draft."""
     if not _is_allowed(update):
         return
     topic = " ".join(context.args) if context.args else ""
@@ -1134,29 +1162,27 @@ async def draft_retry_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     queue = DraftQueue(settings.draft_queue_path)
 
     if topic:
-        # Reset the specific topic
         reset = await queue.reset_to_pending(topic)
         if not reset:
             await update.message.reply_text(
-                f"No stuck draft found matching '{topic}'.\n"
+                f"No completed or failed draft found matching '{topic}'.\n"
                 "Use /drafts to see the queue."
             )
             return
         await update.message.reply_text(f"Reset to pending: {topic}\nStarting now...")
     else:
-        # Reset ALL spawned/failed items
         all_items = queue.get_all()
-        stuck = [i for i in all_items if i["status"] in ("spawned", "failed")]
-        if not stuck:
+        failed = [i for i in all_items if i["status"] == "failed"]
+        if not failed:
             await update.message.reply_text(
-                "No stuck drafts to reset.\n"
-                "Use /draft <topic> to queue a new one."
+                "No failed drafts to retry.\n"
+                "To re-run a completed draft use /draft_retry <topic>."
             )
             return
-        for item in stuck:
+        for item in failed:
             await queue.reset_to_pending(item["topic"])
         await update.message.reply_text(
-            f"Reset {len(stuck)} draft(s) to pending. Starting now..."
+            f"Reset {len(failed)} failed draft(s) to pending. Starting now..."
         )
 
     try:
