@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import date
 from enum import Enum
 
@@ -6,6 +7,14 @@ from jacbotcoach.config import get_settings
 from jacbotcoach.llm.client import OllamaClient, extract_json_list
 
 logger = logging.getLogger(__name__)
+
+
+def _strip_markdown_emphasis(text: str) -> str:
+    """Remove **bold** and *italic* markers so plain-text readers see clean prose."""
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text, flags=re.DOTALL)
+    # Only strip single-asterisk italics when not a bullet point (line-start `- ` or `* `)
+    text = re.sub(r"(?<!\n)\*(?!\s)(.+?)(?<!\s)\*", r"\1", text)
+    return text
 
 
 class Complexity(Enum):
@@ -301,7 +310,7 @@ class LLMRouter:
             "- Do NOT use **bold** or *italic* markdown — write in plain prose\n"
             "- The output will be read as plain text so avoid any special formatting"
         )
-        return await client.generate(prompt, timeout=600.0)
+        return _strip_markdown_emphasis(await client.generate(prompt, timeout=600.0))
 
     async def generate_draft(self, topic: str) -> str:
         """
@@ -324,7 +333,7 @@ class LLMRouter:
             "- Do NOT use **bold** or *italic* markdown — write in plain prose\n"
             "- The output will be read as plain text so avoid any special formatting"
         )
-        return await client.generate(prompt, timeout=600.0)
+        return _strip_markdown_emphasis(await client.generate(prompt, timeout=600.0))
 
     async def accountability_insight(
         self,
