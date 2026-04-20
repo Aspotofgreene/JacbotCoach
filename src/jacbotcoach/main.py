@@ -11,6 +11,7 @@ from jacbotcoach.bot.handlers import (
     done_command,
     build_command,
     builds_command,
+    coach_notes_command,
     draft_command,
     draft_retry_command,
     draft_trigger_command,
@@ -129,6 +130,7 @@ def main_sync() -> None:
     # that share command names (e.g. /done inside the conversation)
     app.add_handler(goals_conversation)
     app.add_handler(coach_conversation)
+    app.add_handler(CommandHandler("coach_notes", coach_notes_command))
 
     app.add_handler(CommandHandler("goals_list", goals_list_command))
     app.add_handler(CommandHandler("goals_cat", goals_categories_command))

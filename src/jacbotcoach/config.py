@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     # Accountability Scoring
     accountability_scores_path: Path = Path("memory/accountability-scores.json")
 
+    # Coaching
+    coach_notes_path: Path = Path("memory/coach-notes.md")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
